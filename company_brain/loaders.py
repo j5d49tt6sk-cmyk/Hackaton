@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import logging
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from pypdf import PdfReader
 
 from company_brain.models import ExtractedSection
 
-SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".docx"}
+SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".docx", ".txt", ".md", ".csv"}
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ def extract_sections(path: Path) -> list[ExtractedSection]:
         return _read_xlsx(path)
     if suffix == ".docx":
         return _read_docx(path)
+    if suffix in {".txt", ".md"}:
+        return _read_text(path)
+    if suffix == ".csv":
+        return _read_csv(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")
 
 
@@ -145,3 +150,39 @@ def _extract_docx_tables(document: Document) -> list[ExtractedSection]:
 
 def _normalize_cell_text(text: str) -> str:
     return " ".join(part.strip() for part in text.splitlines() if part.strip())
+
+
+def _read_text(path: Path) -> list[ExtractedSection]:
+    text = path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not text:
+        return []
+    return [
+        ExtractedSection(
+            content=text,
+            heading=path.stem,
+            metadata={"source_type": path.suffix.lower().lstrip(".")},
+        )
+    ]
+
+
+def _read_csv(path: Path) -> list[ExtractedSection]:
+    lines: list[str] = []
+    with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
+        sample = handle.read(4096)
+        handle.seek(0)
+        dialect = csv.Sniffer().sniff(sample) if sample else csv.excel
+        reader = csv.reader(handle, dialect)
+        for row in reader:
+            values = [value.strip() for value in row if value.strip()]
+            if values:
+                lines.append(" | ".join(values))
+
+    if not lines:
+        return []
+    return [
+        ExtractedSection(
+            content="\n".join(lines),
+            heading=path.stem,
+            metadata={"source_type": "csv", "row_count": len(lines)},
+        )
+    ]

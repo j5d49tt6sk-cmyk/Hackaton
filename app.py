@@ -358,10 +358,13 @@ st.caption("Guided search for past decisions, regulations, reasoning, and risks.
 is_configured = _render_setup_check(_missing_environment())
 
 with st.expander("Upload Documents", expanded=False):
-    st.write("Upload PDFs, Word documents, or Excel workbooks into Supabase.")
+    st.write(
+        "Upload scripts, transcripts, PDFs, Word documents, spreadsheets, or CSVs. "
+        "After indexing, Direct Question will answer from this uploaded knowledge."
+    )
     uploaded_files = st.file_uploader(
         "Documents",
-        type=["pdf", "docx", "xlsx"],
+        type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
         accept_multiple_files=True,
         disabled=not is_configured,
     )
@@ -433,8 +436,11 @@ with guided_tab:
                 _persist_chat_message("assistant", answer.answer, chunks)
 
 with direct_tab:
-    st.subheader("Ask Directly")
-    st.write("Use this when you already know the exact question you want to ask.")
+    st.subheader("Ask Uploaded Knowledge")
+    st.write(
+        "Ask a question and the AI will search the indexed uploads first, then answer "
+        "only from the retrieved evidence with sources."
+    )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -444,17 +450,28 @@ with direct_tab:
             st.markdown(message["content"])
 
     question = st.chat_input(
-        "Ask about decisions, regulations, risks, or old cases",
-        disabled=not is_configured,
+        "Ask a question about the uploaded scripts, documents, decisions, or risks",
     )
 
-    if question and is_configured:
+    if question:
         st.session_state.messages.append({"role": "user", "content": question})
-        _persist_chat_message("user", question)
         with st.chat_message("user"):
             st.markdown(question)
 
         with st.chat_message("assistant"):
+            if not is_configured:
+                response = (
+                    "I can take your question, but the AI backend is not configured "
+                    "yet. Add the OpenAI and Supabase values in `.env`, then upload "
+                    "and index documents before asking."
+                )
+                st.warning(response)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": response}
+                )
+                st.stop()
+
+            _persist_chat_message("user", question)
             with st.spinner("Searching indexed knowledge and grounding an answer..."):
                 try:
                     answer, chunks = _run_company_brain(question, expert_choice, top_k)
