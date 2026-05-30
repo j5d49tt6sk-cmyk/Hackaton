@@ -27,6 +27,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Local Ollama knowledge index
+local_knowledge/
+
 # Build output
 dist/
 build/
