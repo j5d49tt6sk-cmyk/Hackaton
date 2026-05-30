@@ -23,7 +23,8 @@ class _AnswerPayload(BaseModel):
 
 class AnswerGenerator:
     def __init__(self, settings: Settings) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._use_openai = settings.use_openai
+        self._client = OpenAI(api_key=settings.openai_api_key) if self._use_openai else None
         self._model = settings.answer_model
 
     def generate(
@@ -41,6 +42,11 @@ class AnswerGenerator:
                 confidence="Low",
             )
 
+        if not self._use_openai:
+            return _generate_extractive_answer(chunks)
+
+        if self._client is None:
+            raise RuntimeError("OpenAI answering is enabled, but no client exists.")
         response = self._client.chat.completions.create(
             model=self._model,
             temperature=0,
@@ -133,3 +139,31 @@ def _unique_sources(chunks: list[RetrievedChunk]) -> list[str]:
 def _normalize_confidence(value: str) -> str:
     normalized = value.strip().title()
     return normalized if normalized in {"High", "Medium", "Low"} else "Low"
+
+
+def _generate_extractive_answer(chunks: list[RetrievedChunk]) -> GeneratedAnswer:
+    evidence = []
+    for index, chunk in enumerate(chunks[:5], start=1):
+        source = chunk.file_name or chunk.source or "Unknown source"
+        location_parts = []
+        if chunk.page_number:
+            location_parts.append(f"page {chunk.page_number}")
+        if chunk.sheet_name:
+            location_parts.append(f"sheet {chunk.sheet_name}")
+        if chunk.heading:
+            location_parts.append(chunk.heading)
+        location = f" ({', '.join(location_parts)})" if location_parts else ""
+        excerpt = chunk.content.strip().replace("\n", " ")
+        if len(excerpt) > 600:
+            excerpt = excerpt[:597].rstrip() + "..."
+        evidence.append(f"{index}. **{source}{location}**\n\n{excerpt}")
+
+    return GeneratedAnswer(
+        answer=(
+            "OpenAI is disabled, so I cannot generate a synthesized answer. "
+            "Here are the most relevant indexed excerpts I found:\n\n"
+            + "\n\n".join(evidence)
+        ),
+        sources=_unique_sources(chunks),
+        confidence="Medium" if len(chunks) >= 3 else "Low",
+    )

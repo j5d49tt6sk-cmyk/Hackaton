@@ -149,9 +149,12 @@ class IngestionPipeline:
         inserted = 0
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
-            embeddings = self._embedding_client.embed_texts(
-                [chunk.content for chunk in batch]
-            )
+            if self._settings.use_openai:
+                embeddings = self._embedding_client.embed_texts(
+                    [chunk.content for chunk in batch]
+                )
+            else:
+                embeddings = [None] * len(batch)
             inserted += self._document_store.insert_chunks(batch, embeddings)
         return inserted
 

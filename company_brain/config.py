@@ -21,6 +21,7 @@ class Settings:
     chunk_overlap: int = 180
     retrieval_top_k: int = 8
     similarity_threshold: float = 0.2
+    use_openai: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -39,6 +40,7 @@ class Settings:
             similarity_threshold=float(
                 os.getenv("SIMILARITY_THRESHOLD", cls.similarity_threshold)
             ),
+            use_openai=_bool_env("USE_OPENAI", cls.use_openai),
         )
 
 
@@ -63,3 +65,10 @@ def _required(name: str) -> str:
 def _looks_like_placeholder(value: str) -> bool:
     lowered = value.lower()
     return lowered in {"sk-...", "your-service-role-key"} or "your-project" in lowered
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

@@ -48,12 +48,14 @@ def main() -> None:
         ) from exc
     print(f"Supabase: storage bucket {settings.supabase_storage_bucket} is reachable.")
 
-    if not args.skip_openai:
+    if settings.use_openai and not args.skip_openai:
         from openai import OpenAI
 
         client = OpenAI(api_key=settings.openai_api_key)
         client.embeddings.create(model=settings.embedding_model, input="backend check")
         print(f"OpenAI: embedding model {settings.embedding_model} is reachable.")
+    elif not settings.use_openai:
+        print("OpenAI: skipped because USE_OPENAI=false.")
 
     print("Backend configuration looks ready.")
 

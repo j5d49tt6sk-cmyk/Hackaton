@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +107,7 @@ class SupabaseDocumentStore:
         return int(result.data[0]["id"])
 
     def insert_chunks(
-        self, chunks: list[DocumentChunk], embeddings: list[list[float]]
+        self, chunks: list[DocumentChunk], embeddings: list[list[float] | None]
     ) -> int:
         rows = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
@@ -150,6 +151,38 @@ class SupabaseDocumentStore:
         result = self._client.rpc("match_documents", params).execute()
         return [_to_retrieved_chunk(row) for row in result.data or []]
 
+    def keyword_search_documents(
+        self,
+        query: str,
+        top_k: int,
+        expert: str | None = None,
+        scan_limit: int = 1000,
+    ) -> list[RetrievedChunk]:
+        tokens = _query_tokens(query)
+        request = (
+            self._client.table("document_chunks")
+            .select(
+                "id, document_id, content, chunk_index, page_number, sheet_name, "
+                "heading, expert, topic, metadata, documents(file_name, source)"
+            )
+            .limit(scan_limit)
+        )
+        if expert:
+            request = request.eq("expert", expert)
+        result = request.execute()
+
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for row in result.data or []:
+            score = _keyword_score(row.get("content") or "", tokens)
+            if score > 0:
+                scored.append((score, row))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            _to_retrieved_chunk(_keyword_row_to_retrieved(row, score))
+            for score, row in scored[:top_k]
+        ]
+
     def insert_chat_message(
         self,
         session_id: str,
@@ -188,3 +221,57 @@ def _to_retrieved_chunk(row: dict[str, Any]) -> RetrievedChunk:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
+
+
+def _query_tokens(query: str) -> list[str]:
+    stop_words = {
+        "about",
+        "and",
+        "are",
+        "der",
+        "die",
+        "das",
+        "for",
+        "from",
+        "how",
+        "ist",
+        "mit",
+        "the",
+        "und",
+        "was",
+        "what",
+        "wie",
+        "with",
+    }
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", query.lower())
+    return [token for token in tokens if token not in stop_words]
+
+
+def _keyword_score(content: str, tokens: list[str]) -> float:
+    if not tokens:
+        return 0.0
+    lowered = content.lower()
+    matches = sum(lowered.count(token) for token in tokens)
+    coverage = sum(1 for token in set(tokens) if token in lowered)
+    if matches == 0:
+        return 0.0
+    return float(matches + coverage * 2)
+
+
+def _keyword_row_to_retrieved(row: dict[str, Any], score: float) -> dict[str, Any]:
+    document = row.get("documents") or {}
+    return {
+        "id": row["id"],
+        "document_id": row.get("document_id"),
+        "content": row["content"],
+        "source": document.get("source"),
+        "file_name": document.get("file_name"),
+        "expert": row.get("expert"),
+        "topic": row.get("topic"),
+        "chunk_index": row.get("chunk_index"),
+        "page_number": row.get("page_number"),
+        "sheet_name": row.get("sheet_name"),
+        "heading": row.get("heading"),
+        "metadata": {**(row.get("metadata") or {}), "retrieval_mode": "keyword"},
+        "similarity": min(score / 10.0, 1.0),
+    }

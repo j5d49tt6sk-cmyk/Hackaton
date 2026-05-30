@@ -22,9 +22,17 @@ class Retriever:
         document_store: SupabaseDocumentStore | None = None,
     ) -> None:
         self._settings = settings
-        self._embedding_client = embedding_client or EmbeddingClient(
-            api_key=settings.openai_api_key,
-            model=settings.embedding_model,
+        self._embedding_client = (
+            embedding_client
+            if embedding_client is not None
+            else (
+                EmbeddingClient(
+                    api_key=settings.openai_api_key,
+                    model=settings.embedding_model,
+                )
+                if settings.use_openai
+                else None
+            )
         )
         self._document_store = document_store or SupabaseDocumentStore(
             settings.supabase_url,
@@ -38,6 +46,14 @@ class Retriever:
         expert: str | None = None,
         top_k: int | None = None,
     ) -> list[RetrievedChunk]:
+        if not self._settings.use_openai:
+            return self._document_store.keyword_search_documents(
+                query=question,
+                top_k=top_k or self._settings.retrieval_top_k,
+                expert=expert,
+            )
+        if self._embedding_client is None:
+            raise RuntimeError("OpenAI retrieval is enabled, but no embedding client exists.")
         query_embedding = self._embedding_client.embed_text(question)
         return self._document_store.match_documents(
             query_embedding=query_embedding,
