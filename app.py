@@ -84,8 +84,8 @@ if _logo_path.exists():
         left: 50%;
         top: 50%;
         transform: translate(-50%, -50%);
-        width: min(78vw, 980px);
-        height: min(46vw, 560px);
+        width: min(156vw, 1960px);
+        height: min(92vw, 1120px);
         background-image: url("data:image/png;base64,{_logo_data}");
         background-repeat: no-repeat;
         background-position: center;
