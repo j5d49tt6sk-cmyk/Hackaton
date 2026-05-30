@@ -56,10 +56,12 @@ class OllamaAnswerGenerator:
             with urllib.request.urlopen(request, timeout=120) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.URLError as exc:
-            raise RuntimeError(
-                "Ollama is not reachable. Start it with `ollama serve` and pull "
-                f"the model with `ollama pull {self._model}`."
-            ) from exc
+            return (
+                "Ollama is not reachable, so I cannot synthesize a local model "
+                "answer yet. I found relevant evidence; inspect the retrieved "
+                "sources below. To enable local generation, start Ollama with "
+                f"`ollama serve` and pull the model with `ollama pull {self._model}`."
+            )
         return str(data.get("response", ""))
 
 
