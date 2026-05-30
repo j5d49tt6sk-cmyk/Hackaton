@@ -45,12 +45,14 @@ class Retriever:
         question: str,
         expert: str | None = None,
         top_k: int | None = None,
+        requester_access_level: int = 1,
     ) -> list[RetrievedChunk]:
         if not self._settings.use_openai:
             return self._document_store.keyword_search_documents(
                 query=question,
                 top_k=top_k or self._settings.retrieval_top_k,
                 expert=expert,
+                requester_access_level=requester_access_level,
             )
         if self._embedding_client is None:
             raise RuntimeError("OpenAI retrieval is enabled, but no embedding client exists.")
@@ -60,6 +62,7 @@ class Retriever:
             top_k=top_k or self._settings.retrieval_top_k,
             expert=expert,
             similarity_threshold=self._settings.similarity_threshold,
+            requester_access_level=requester_access_level,
         )
 
 

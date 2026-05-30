@@ -8,6 +8,7 @@ from typing import Any
 
 from supabase import Client, create_client
 
+from company_brain.access_control import EmployeeAccount, employee_from_row
 from company_brain.models import DocumentChunk, RetrievedChunk
 
 
@@ -65,6 +66,8 @@ class SupabaseDocumentStore:
         path: Path,
         expert: str | None,
         topic: str | None,
+        access_level: int,
+        access_tag: str,
         metadata: dict[str, Any] | None = None,
     ) -> int:
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -77,6 +80,8 @@ class SupabaseDocumentStore:
             "source": str(path),
             "expert": expert,
             "topic": topic,
+            "access_level": access_level,
+            "access_tag": access_tag,
             "metadata": metadata or {},
             "status": "created",
         }
@@ -141,12 +146,14 @@ class SupabaseDocumentStore:
         top_k: int,
         expert: str | None = None,
         similarity_threshold: float = 0.0,
+        requester_access_level: int = 1,
     ) -> list[RetrievedChunk]:
         params: dict[str, Any] = {
             "query_embedding": query_embedding,
             "match_count": top_k,
             "match_expert": expert,
             "similarity_threshold": similarity_threshold,
+            "requester_access_level": requester_access_level,
         }
         result = self._client.rpc("match_documents", params).execute()
         return [_to_retrieved_chunk(row) for row in result.data or []]
@@ -156,6 +163,7 @@ class SupabaseDocumentStore:
         query: str,
         top_k: int,
         expert: str | None = None,
+        requester_access_level: int = 1,
         scan_limit: int = 1000,
     ) -> list[RetrievedChunk]:
         tokens = _query_tokens(query)
@@ -163,7 +171,8 @@ class SupabaseDocumentStore:
             self._client.table("document_chunks")
             .select(
                 "id, document_id, content, chunk_index, page_number, sheet_name, "
-                "heading, expert, topic, metadata, documents(file_name, source)"
+                "heading, expert, topic, metadata, "
+                "documents(file_name, source, access_level, access_tag)"
             )
             .limit(scan_limit)
         )
@@ -173,6 +182,13 @@ class SupabaseDocumentStore:
 
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in result.data or []:
+            document = row.get("documents") or {}
+            document_access_level = int(document.get("access_level") or 1)
+            if (
+                document_access_level >= 99
+                or document_access_level > requester_access_level
+            ):
+                continue
             score = _keyword_score(row.get("content") or "", tokens)
             if score > 0:
                 scored.append((score, row))
@@ -199,6 +215,17 @@ class SupabaseDocumentStore:
             "metadata": metadata or {},
         }
         self._client.table("chat_messages").insert(row).execute()
+
+    def list_employee_accounts(self) -> list[EmployeeAccount]:
+        result = (
+            self._client.table("employee_accounts")
+            .select("user_id, full_name, email, department, access_level")
+            .eq("active", True)
+            .order("access_level")
+            .order("full_name")
+            .execute()
+        )
+        return [employee_from_row(row) for row in result.data or []]
 
 
 def _to_retrieved_chunk(row: dict[str, Any]) -> RetrievedChunk:
@@ -260,6 +287,8 @@ def _keyword_score(content: str, tokens: list[str]) -> float:
 
 def _keyword_row_to_retrieved(row: dict[str, Any], score: float) -> dict[str, Any]:
     document = row.get("documents") or {}
+    access_level = int(document.get("access_level") or 1)
+    access_tag = document.get("access_tag") or "Public"
     return {
         "id": row["id"],
         "document_id": row.get("document_id"),
@@ -272,6 +301,11 @@ def _keyword_row_to_retrieved(row: dict[str, Any], score: float) -> dict[str, An
         "page_number": row.get("page_number"),
         "sheet_name": row.get("sheet_name"),
         "heading": row.get("heading"),
-        "metadata": {**(row.get("metadata") or {}), "retrieval_mode": "keyword"},
+        "metadata": {
+            **(row.get("metadata") or {}),
+            "retrieval_mode": "keyword",
+            "access_level": access_level,
+            "access_tag": access_tag,
+        },
         "similarity": min(score / 10.0, 1.0),
     }

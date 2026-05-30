@@ -35,6 +35,7 @@ def main() -> None:
         "document_texts",
         "document_chunks",
         "chat_messages",
+        "employee_accounts",
     ):
         supabase.table(table_name).select("id").limit(1).execute()
         print(f"Supabase: {table_name} table is reachable.")

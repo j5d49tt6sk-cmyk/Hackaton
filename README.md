@@ -11,6 +11,7 @@ File upload or batch ingestion
 -> documents: file metadata and storage path
 -> document_texts: raw and cleaned extracted text
 -> document_chunks: chunk text, metadata, and pgvector embeddings
+-> employee_accounts: demo employees and access levels
 -> match_documents RPC: semantic search over document_chunks
 -> OpenAI answer generation
 -> chat_messages: conversation history and cited chunks
@@ -30,6 +31,7 @@ company_brain/
   ingestion.py                    Storage-first ingestion pipeline
   loaders.py                      PDF, DOCX, XLSX extraction
   metadata.py                     Expert/topic inference
+  access_control.py               Demo employee and document access rules
   models.py                       Shared data models
   retrieval.py                    Semantic retrieval
   supabase_store.py               Supabase tables, RPC, Storage, chat messages
@@ -119,7 +121,8 @@ Run:
 
 The app supports:
 
-- password-gated hackathon demo access
+- demo employee accounts with per-user access levels
+- access tags on uploads: Public, Internal, Confidential, Email Restricted
 - guided case finder
 - direct question answering
 - Expert Twin filtering
@@ -127,3 +130,7 @@ The app supports:
 - indexing uploaded PDF/DOCX/XLSX files
 - persisted chat messages in Supabase
 - evidence display with file, page, sheet, and heading metadata
+
+Retrieval is filtered before answer generation. A signed-in employee only gets
+chunks from documents where `documents.access_level <= employee.access_level`.
+Email Restricted documents use level `99`, so no demo employee can retrieve them.

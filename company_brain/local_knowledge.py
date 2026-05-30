@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from company_brain.access_control import infer_document_access
 from company_brain.chunking import split_text
 from company_brain.loaders import extract_sections
 from company_brain.metadata import infer_expert, infer_topic
@@ -44,6 +45,8 @@ class LocalKnowledgeStore:
         topic: str | None = None,
         chunk_size: int = 1200,
         overlap: int = 180,
+        access_level: int | None = None,
+        access_tag: str | None = None,
     ) -> int:
         stored_path = self._uploads_dir / source_path.name
         stored_path.write_bytes(source_path.read_bytes())
@@ -51,6 +54,9 @@ class LocalKnowledgeStore:
 
         inferred_expert = infer_expert(source_path, expert)
         inferred_topic = infer_topic(source_path, topic)
+        inferred_access_level, inferred_access_tag = infer_document_access(source_path)
+        document_access_level = access_level or inferred_access_level
+        document_access_tag = access_tag or inferred_access_tag
         next_id = self._next_chunk_id()
         rows: list[dict[str, Any]] = []
 
@@ -75,6 +81,8 @@ class LocalKnowledgeStore:
                             **section.metadata,
                             "section_index": section_index,
                             "local_backend": True,
+                            "access_level": document_access_level,
+                            "access_tag": document_access_tag,
                         },
                         "similarity": 0.0,
                         "page_number": section.page_number,
@@ -95,6 +103,7 @@ class LocalKnowledgeStore:
         question: str,
         expert: str | None = None,
         top_k: int = 8,
+        requester_access_level: int = 1,
     ) -> list[RetrievedChunk]:
         query_tokens = _expand_query_tokens(_tokens(question))
         if not query_tokens:
@@ -103,6 +112,13 @@ class LocalKnowledgeStore:
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in self._iter_rows():
             if expert and row.get("expert") != expert:
+                continue
+            metadata = row.get("metadata") or {}
+            document_access_level = int(metadata.get("access_level") or 1)
+            if (
+                document_access_level >= 99
+                or document_access_level > requester_access_level
+            ):
                 continue
             score = _score(query_tokens, _tokens(row.get("content", "")))
             if score > 0:

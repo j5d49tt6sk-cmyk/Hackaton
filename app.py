@@ -61,6 +61,11 @@ if __name__ == "__main__" and not os.getenv("COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPE
 
 import streamlit as st
 
+from company_brain.access_control import (
+    DEMO_EMPLOYEES,
+    EmployeeAccount,
+    access_options,
+)
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
 from company_brain.ingestion import IngestionPipeline
@@ -185,28 +190,106 @@ def _entered_password_is_valid() -> bool:
 
 
 def _is_authenticated() -> bool:
-    return bool(st.session_state.get("company_brain_authenticated"))
+    return bool(st.session_state.get("employee_user_id"))
+
+
+def _employee_accounts() -> list[EmployeeAccount]:
+    if _uses_ollama_backend() or _missing_environment():
+        return DEMO_EMPLOYEES
+    try:
+        accounts = _document_store().list_employee_accounts()
+    except Exception:
+        logging.exception("Failed to load employee accounts from Supabase")
+        return DEMO_EMPLOYEES
+    return accounts or DEMO_EMPLOYEES
+
+
+def _current_employee() -> EmployeeAccount:
+    user_id = st.session_state.get("employee_user_id")
+    for employee in _employee_accounts():
+        if employee.user_id == user_id:
+            return employee
+    return DEMO_EMPLOYEES[0]
+
+
+def _render_login_gate() -> None:
+    st.title("Company Brain")
+    st.caption("Choose a demo employee account to apply document access controls.")
+
+    employees = _employee_accounts()
+    labels = [
+        (
+            f"{employee.full_name} | {employee.department} | "
+            f"{employee.access_label}"
+        )
+        for employee in employees
+    ]
+
+    with st.form("employee_login_form"):
+        selected_label = st.selectbox("Employee", labels)
+        submitted = st.form_submit_button("Continue", type="primary")
+
+    if submitted:
+        selected_employee = employees[labels.index(selected_label)]
+        st.session_state.employee_user_id = selected_employee.user_id
+        st.session_state.employee_access_level = selected_employee.access_level
+        st.session_state.employee_name = selected_employee.full_name
+        st.session_state.company_brain_authenticated = True
+        st.rerun()
 
 
 def _render_password_gate() -> None:
-    st.title("Company Brain")
-    st.caption("Protected access for the hackathon demo.")
+    if not st.session_state.get("company_brain_authenticated"):
+        st.title("Company Brain")
+        st.caption("Protected access for the hackathon demo.")
 
-    with st.form("password_form"):
-        st.text_input(
-            "Password",
-            type="password",
-            key="company_brain_password",
-            placeholder="Enter access password",
+        with st.form("password_form"):
+            st.text_input(
+                "Password",
+                type="password",
+                key="company_brain_password",
+                placeholder="Enter access password",
+            )
+            submitted = st.form_submit_button("Unlock", type="primary")
+
+        if submitted:
+            if _entered_password_is_valid():
+                st.session_state.company_brain_authenticated = True
+                st.rerun()
+            else:
+                st.error("Wrong password.")
+    else:
+        _render_login_gate()
+
+
+def _requester_access_level() -> int:
+    return int(st.session_state.get("employee_access_level") or PUBLIC_FALLBACK_ACCESS)
+
+
+PUBLIC_FALLBACK_ACCESS = 1
+
+
+def _render_employee_badge() -> None:
+    employee = _current_employee()
+    badge_column, logout_column = st.columns([0.78, 0.22])
+    with badge_column:
+        st.caption(
+            f"Signed in as {employee.full_name} ({employee.department}) | "
+            f"User ID: {employee.user_id} | "
+            f"Access: {employee.access_label} (level {employee.access_level})"
         )
-        submitted = st.form_submit_button("Unlock", type="primary")
-
-    if submitted:
-        if _entered_password_is_valid():
-            st.session_state.company_brain_authenticated = True
+    with logout_column:
+        if st.button("Switch User", use_container_width=True):
+            for key in (
+                "employee_user_id",
+                "employee_access_level",
+                "employee_name",
+                "case_overview",
+                "case_result",
+                "quick_result",
+            ):
+                st.session_state.pop(key, None)
             st.rerun()
-        else:
-            st.error("Wrong password.")
 
 
 @st.cache_resource
@@ -331,9 +414,15 @@ def _retrieve_company_brain(
             question,
             expert=selected_expert,
             top_k=top_k,
+            requester_access_level=_requester_access_level(),
         )
 
-    return _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
+    return _retriever().retrieve(
+        question,
+        expert=selected_expert,
+        top_k=top_k,
+        requester_access_level=_requester_access_level(),
+    )
 
 
 def _generate_company_brain_answer(
@@ -472,6 +561,8 @@ def _chunk_sources(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
             "sheet_name": chunk.sheet_name,
             "heading": chunk.heading,
             "similarity": chunk.similarity,
+            "access_level": chunk.metadata.get("access_level"),
+            "access_tag": chunk.metadata.get("access_tag"),
         }
         for chunk in chunks
     ]
@@ -490,12 +581,22 @@ def _persist_chat_message(
             role=role,
             content=content,
             sources=_chunk_sources(chunks or []),
+            metadata={
+                "employee_user_id": _current_employee().user_id,
+                "employee_name": _current_employee().full_name,
+                "employee_access_level": _current_employee().access_level,
+            },
         )
     except Exception:
         logging.exception("Failed to persist chat message")
 
 
-def _ingest_uploaded_file(uploaded_file, expert_choice: str) -> int:
+def _ingest_uploaded_file(
+    uploaded_file,
+    expert_choice: str,
+    access_level: int,
+    access_tag: str,
+) -> int:
     selected_expert = expert_for_ui_choice(expert_choice)
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir) / uploaded_file.name
@@ -507,12 +608,16 @@ def _ingest_uploaded_file(uploaded_file, expert_choice: str) -> int:
                 topic=Path(uploaded_file.name).stem,
                 chunk_size=int(os.getenv("CHUNK_SIZE", "1200")),
                 overlap=int(os.getenv("CHUNK_OVERLAP", "180")),
+                access_level=access_level,
+                access_tag=access_tag,
             )
         return _ingestion_pipeline().ingest_file(
             temp_path,
             expert=selected_expert,
             topic=Path(uploaded_file.name).stem,
             replace_existing=True,
+            access_level=access_level,
+            access_tag=access_tag,
         )
 
 
@@ -544,6 +649,8 @@ def _render_evidence(chunks: list[RetrievedChunk]) -> None:
                 {
                     "expert": chunk.expert,
                     "topic": chunk.topic,
+                    "access_level": chunk.metadata.get("access_level"),
+                    "access_tag": chunk.metadata.get("access_tag"),
                     "chunk_index": chunk.chunk_index,
                     "metadata": chunk.metadata,
                 }
@@ -582,6 +689,14 @@ def _upload_signature(uploaded_file) -> str:
 def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
     st.markdown("### Upload")
     st.caption("Files are chunked and added to Company Brain immediately.")
+    access_choices = access_options()
+    selected_access_label = st.selectbox(
+        "Access tag",
+        [label for label, _level in access_choices],
+        index=1,
+        help="Email Restricted documents are stored but hidden from all demo employees.",
+    )
+    selected_access_level = dict(access_choices)[selected_access_label]
     uploaded_files = st.file_uploader(
         "Documents",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
@@ -602,7 +717,12 @@ def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
         progress = st.progress(0)
         for index, uploaded_file in enumerate(pending_files, start=1):
             with st.spinner(f"Indexing {uploaded_file.name}..."):
-                chunks = _ingest_uploaded_file(uploaded_file, expert_choice)
+                chunks = _ingest_uploaded_file(
+                    uploaded_file,
+                    expert_choice,
+                    selected_access_level,
+                    selected_access_label,
+                )
                 total_chunks += chunks
                 st.session_state.indexed_uploads.add(_upload_signature(uploaded_file))
             progress.progress(index / len(pending_files))
@@ -705,6 +825,7 @@ if not _is_authenticated():
 
 st.title("Company Brain")
 st.caption("Case-first access to past decisions, regulations, reasoning, and risks.")
+_render_employee_badge()
 
 is_configured = _render_setup_check(_missing_environment())
 expert_choice = "Ask Company Brain"

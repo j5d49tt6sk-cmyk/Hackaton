@@ -4,7 +4,8 @@ create or replace function match_documents(
   query_embedding vector(1536),
   match_count int default 8,
   match_expert text default null,
-  similarity_threshold float default 0.0
+  similarity_threshold float default 0.0,
+  requester_access_level int default 1
 )
 returns table (
   id bigint,
@@ -40,7 +41,9 @@ as $$
       'document_metadata', documents.metadata,
       'storage_bucket', documents.storage_bucket,
       'storage_path', documents.storage_path,
-      'mime_type', documents.mime_type
+      'mime_type', documents.mime_type,
+      'access_level', documents.access_level,
+      'access_tag', documents.access_tag
     ) as metadata,
     1 - (document_chunks.embedding <=> query_embedding) as similarity
   from document_chunks
@@ -48,6 +51,8 @@ as $$
   where
     document_chunks.embedding is not null
     and (match_expert is null or coalesce(document_chunks.expert, documents.expert) = match_expert)
+    and documents.access_level < 99
+    and documents.access_level <= requester_access_level
     and (1 - (document_chunks.embedding <=> query_embedding)) >= similarity_threshold
   order by document_chunks.embedding <=> query_embedding
   limit match_count;

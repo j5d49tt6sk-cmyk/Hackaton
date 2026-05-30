@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from company_brain.access_control import infer_document_access
 from company_brain.chunking import chunk_sections, normalize_text
 from company_brain.config import Settings
 from company_brain.embeddings import EmbeddingClient
@@ -40,6 +41,8 @@ class IngestionPipeline:
         topic: str | None = None,
         batch_size: int = 64,
         replace_existing: bool = True,
+        access_level: int | None = None,
+        access_tag: str | None = None,
     ) -> int:
         files = iter_supported_files(root)
         logger.info("Found %s supported files under %s", len(files), root)
@@ -53,6 +56,8 @@ class IngestionPipeline:
                     topic=topic,
                     batch_size=batch_size,
                     replace_existing=replace_existing,
+                    access_level=access_level,
+                    access_tag=access_tag,
                 )
             except Exception:
                 logger.exception("Failed to ingest %s", file_path)
@@ -67,9 +72,14 @@ class IngestionPipeline:
         topic: str | None = None,
         batch_size: int = 64,
         replace_existing: bool = True,
+        access_level: int | None = None,
+        access_tag: str | None = None,
     ) -> int:
         inferred_expert = infer_expert(file_path, expert)
         inferred_topic = infer_topic(file_path, topic)
+        inferred_access_level, inferred_access_tag = infer_document_access(file_path)
+        document_access_level = access_level or inferred_access_level
+        document_access_tag = access_tag or inferred_access_tag
         if replace_existing:
             existing_document_id = self._document_store.find_existing_document_id(
                 file_path
@@ -86,7 +96,13 @@ class IngestionPipeline:
             file_path,
             expert=inferred_expert,
             topic=inferred_topic,
-            metadata=_document_metadata(file_path),
+            access_level=document_access_level,
+            access_tag=document_access_tag,
+            metadata=_document_metadata(
+                file_path,
+                document_access_level,
+                document_access_tag,
+            ),
         )
 
         try:
@@ -132,6 +148,8 @@ class IngestionPipeline:
                     "status": "indexed",
                     "metadata": {
                         **_document_metadata(file_path),
+                        "access_level": document_access_level,
+                        "access_tag": document_access_tag,
                         "section_count": len(sections),
                         "chunk_count": inserted,
                     },
@@ -175,9 +193,16 @@ def _join_sections(sections: list[ExtractedSection], clean: bool) -> str:
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def _document_metadata(file_path: Path) -> dict[str, object]:
+def _document_metadata(
+    file_path: Path,
+    access_level: int | None = None,
+    access_tag: str | None = None,
+) -> dict[str, object]:
+    inferred_access_level, inferred_access_tag = infer_document_access(file_path)
     return {
         "extension": file_path.suffix.lower(),
         "source_name": file_path.name,
         "source_path": str(file_path),
+        "access_level": access_level or inferred_access_level,
+        "access_tag": access_tag or inferred_access_tag,
     }
