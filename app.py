@@ -503,7 +503,7 @@ def _retrieve_similar_case_chunks(
         top_k=5000 if _uses_ollama_backend() else 60,
     )
     case_chunks = [chunk for chunk in chunks if _is_case_chunk(chunk)]
-    return case_chunks or chunks
+    return case_chunks
 
 
 def _remember_case_overview(
