@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 
@@ -12,15 +13,18 @@ class OllamaAnswerGenerator:
         self,
         model: str = "qwen2.5:0.5b",
         base_url: str = "http://localhost:11434",
+        timeout_seconds: int = 45,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
 
     def generate(
         self,
         question: str,
         chunks: list[RetrievedChunk],
         expert: str | None = None,
+        answer_style: str = "case",
     ) -> GeneratedAnswer:
         if not chunks:
             return GeneratedAnswer(
@@ -29,7 +33,11 @@ class OllamaAnswerGenerator:
                 confidence="Low",
             )
 
-        prompt = _build_prompt(question, chunks, expert)
+        missing_exact_term_answer = _answer_if_exact_term_missing(question, chunks)
+        if missing_exact_term_answer:
+            return missing_exact_term_answer
+
+        prompt = _build_prompt(question, chunks, expert, answer_style)
         answer = self._generate(prompt).strip()
         return GeneratedAnswer(
             answer=answer,
@@ -43,7 +51,11 @@ class OllamaAnswerGenerator:
                 "model": self._model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0},
+                "options": {
+                    "temperature": 0,
+                    "num_predict": 350,
+                    "num_ctx": 4096,
+                },
             }
         ).encode("utf-8")
         request = urllib.request.Request(
@@ -53,8 +65,16 @@ class OllamaAnswerGenerator:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self._timeout_seconds,
+            ) as response:
                 data = json.loads(response.read().decode("utf-8"))
+        except socket.timeout as exc:
+            raise RuntimeError(
+                "Ollama took too long to answer. Try a more specific question or "
+                "reduce Evidence Depth."
+            ) from exc
         except urllib.error.URLError as exc:
             return (
                 "Ollama is not reachable, so I cannot synthesize a local model "
@@ -69,9 +89,11 @@ def _build_prompt(
     question: str,
     chunks: list[RetrievedChunk],
     expert: str | None,
+    answer_style: str,
 ) -> str:
     context = []
-    for index, chunk in enumerate(chunks, start=1):
+    for index, chunk in enumerate(chunks[:5], start=1):
+        content = chunk.content[:1200]
         context.append(
             "\n".join(
                 [
@@ -79,17 +101,53 @@ def _build_prompt(
                     f"File: {chunk.file_name or chunk.source or 'Unknown'}",
                     f"Expert: {chunk.expert or expert or 'Company Brain'}",
                     f"Topic: {chunk.topic or 'Unknown'}",
-                    chunk.content,
+                    content,
                 ]
             )
         )
+    if answer_style == "plain":
+        answer_instruction = (
+            "Answer in plain text in 3 to 6 concise sentences. Do not use case-card "
+            "section headings like Problem, Decision, Reasoning, Regulatory "
+            "Requirement, or Risks. Mention uncertainty clearly if the evidence is "
+            "thin."
+        )
+    else:
+        answer_instruction = (
+            "Structure useful answers with Problem, Decision, Reasoning, Regulatory "
+            "Requirement, Risks, and Sources when those sections fit the question."
+        )
+
     return (
         "You are Company Brain. Answer only from the evidence below. "
-        "If the evidence is insufficient, say so. Structure useful answers with "
-        "Problem, Decision, Reasoning, Regulatory Requirement, Risks, and Sources "
-        "when those sections fit the question.\n\n"
+        "Do not add general knowledge about regulations, products, dates, or laws. "
+        "If the evidence is insufficient or does not mention the user's exact term, "
+        f"say so. {answer_instruction}\n\n"
         f"Question:\n{question}\n\n"
         f"Evidence:\n{chr(10).join(context)}"
+    )
+
+
+def _answer_if_exact_term_missing(
+    question: str,
+    chunks: list[RetrievedChunk],
+) -> GeneratedAnswer | None:
+    lowered_question = question.lower()
+    if "micar" not in lowered_question:
+        return None
+    combined = "\n".join(chunk.content.lower() for chunk in chunks)
+    if "micar" in combined:
+        return None
+    return GeneratedAnswer(
+        answer=(
+            "I did not find an exact MiCAR reference in the indexed uploads. "
+            "The closest retrieved evidence mentions crypto regulations, digital "
+            "assets, regulatory navigation, and related compliance topics. Based on "
+            "the uploaded evidence, I cannot reliably state MiCAR-specific "
+            "requirements."
+        ),
+        sources=_unique_sources(chunks),
+        confidence="Low",
     )
 
 

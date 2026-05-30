@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +13,20 @@ from company_brain.models import RetrievedChunk
 
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_]{3,}")
+
+QUERY_EXPANSIONS = {
+    "micar": {
+        "markets",
+        "crypto",
+        "assets",
+        "regulation",
+        "digital",
+        "cryptoassets",
+    },
+    "fatca": {"tax", "reporting", "withholding", "compliance"},
+    "mifid": {"product", "governance", "financial", "instruments"},
+    "sfdr": {"sustainability", "disclosure", "esg"},
+}
 
 
 class LocalKnowledgeStore:
@@ -34,6 +47,7 @@ class LocalKnowledgeStore:
     ) -> int:
         stored_path = self._uploads_dir / source_path.name
         stored_path.write_bytes(source_path.read_bytes())
+        self._remove_existing_file(source_path.name)
 
         inferred_expert = infer_expert(source_path, expert)
         inferred_topic = infer_topic(source_path, topic)
@@ -82,7 +96,7 @@ class LocalKnowledgeStore:
         expert: str | None = None,
         top_k: int = 8,
     ) -> list[RetrievedChunk]:
-        query_tokens = _tokens(question)
+        query_tokens = _expand_query_tokens(_tokens(question))
         if not query_tokens:
             return []
 
@@ -114,9 +128,29 @@ class LocalKnowledgeStore:
         ids = [int(row.get("id", 0)) for row in self._iter_rows()]
         return max(ids, default=0) + 1
 
+    def _remove_existing_file(self, file_name: str) -> None:
+        if not self._chunks_path.exists():
+            return
+        rows = [
+            row
+            for row in self._iter_rows()
+            if row.get("file_name") != file_name
+        ]
+        with self._chunks_path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=True) + "\n")
+
 
 def _tokens(text: str) -> set[str]:
-    return {match.group(0).lower() for match in TOKEN_PATTERN.finditer(text)}
+    tokens = {match.group(0).lower() for match in TOKEN_PATTERN.finditer(text)}
+    return tokens | {_compact(token) for token in tokens if _compact(token)}
+
+
+def _expand_query_tokens(tokens: set[str]) -> set[str]:
+    expanded = set(tokens)
+    for token in list(tokens):
+        expanded.update(QUERY_EXPANSIONS.get(token, set()))
+    return expanded
 
 
 def _score(query_tokens: set[str], content_tokens: set[str]) -> float:
@@ -124,6 +158,10 @@ def _score(query_tokens: set[str], content_tokens: set[str]) -> float:
     if not overlap:
         return 0.0
     return len(overlap) / math.sqrt(len(query_tokens) * max(len(content_tokens), 1))
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
 def _to_retrieved_chunk(row: dict[str, Any]) -> RetrievedChunk:
