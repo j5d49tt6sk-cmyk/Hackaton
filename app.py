@@ -166,7 +166,16 @@ def _document_store() -> SupabaseDocumentStore:
 
 
 def _missing_environment() -> list[str]:
-    return [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
+    return [
+        name
+        for name in REQUIRED_ENV_VARS
+        if not os.getenv(name) or _looks_like_placeholder(os.getenv(name, ""))
+    ]
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    lowered = value.lower()
+    return lowered in {"sk-...", "your-service-role-key"} or "your-project" in lowered
 
 
 def _format_answer(answer: GeneratedAnswer) -> str:
@@ -382,7 +391,7 @@ with guided_tab:
             placeholder="Example: tax evasion, FATCA, MiFID, ESG disclosure",
         )
         situation = st.text_area(
-            "Describe the situation in normal words",
+            "Describe the situation",
             placeholder=(
                 "Example: A client setup looks like it might avoid tax reporting. "
                 "I want to know how similar cases were handled before."
