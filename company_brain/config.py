@@ -42,8 +42,24 @@ class Settings:
         )
 
 
+def find_placeholder_settings(settings: Settings) -> list[str]:
+    placeholders: list[str] = []
+    if _looks_like_placeholder(settings.openai_api_key):
+        placeholders.append("OPENAI_API_KEY")
+    if _looks_like_placeholder(settings.supabase_url):
+        placeholders.append("SUPABASE_URL")
+    if _looks_like_placeholder(settings.supabase_service_role_key):
+        placeholders.append("SUPABASE_SERVICE_ROLE_KEY")
+    return placeholders
+
+
 def _required(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    lowered = value.lower()
+    return lowered in {"sk-...", "your-service-role-key"} or "your-project" in lowered

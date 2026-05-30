@@ -9,7 +9,6 @@ from pypdf import PdfReader
 
 from company_brain.models import ExtractedSection
 
-
 SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".docx"}
 
 logger = logging.getLogger(__name__)
@@ -82,7 +81,6 @@ def _read_xlsx(path: Path) -> list[ExtractedSection]:
     workbook.close()
     return sections
 
-
 def _read_docx(path: Path) -> list[ExtractedSection]:
     document = Document(path)
     sections: list[ExtractedSection] = []
@@ -112,4 +110,22 @@ def _read_docx(path: Path) -> list[ExtractedSection]:
             current_paragraphs.append(text)
 
     flush()
+    for table_index, table in enumerate(document.tables, start=1):
+        rows: list[str] = []
+        for row in table.rows:
+            values = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if values:
+                rows.append(" | ".join(values))
+        if rows:
+            sections.append(
+                ExtractedSection(
+                    content="\n".join(rows),
+                    heading=f"Table {table_index}",
+                    metadata={
+                        "source_type": "docx_table",
+                        "table_index": table_index,
+                        "row_count": len(rows),
+                    },
+                )
+            )
     return sections

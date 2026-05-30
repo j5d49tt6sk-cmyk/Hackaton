@@ -63,6 +63,19 @@ Run the SQL in `supabase/migrations/001_initial_schema.sql` in Supabase. If the
 tables already exist, compare the migration with the deployed schema and apply
 the missing columns, indexes, and RPC.
 
+Verify the backend after `.env`, the Storage bucket, and the Supabase schema are
+ready:
+
+```bash
+python3 check_backend.py
+```
+
+To test only Supabase connectivity without calling OpenAI:
+
+```bash
+python3 check_backend.py --skip-openai
+```
+
 ## Batch Ingestion
 
 The local SIX documents are in:
