@@ -99,10 +99,14 @@ REQUIRED_ENV_VARS = [
 ]
 
 
-def _password_is_valid() -> bool:
+def _entered_password_is_valid() -> bool:
     expected_password = os.getenv("COMPANY_BRAIN_PASSWORD", "realesthacks")
     entered_password = st.session_state.get("company_brain_password", "")
     return entered_password == expected_password
+
+
+def _is_authenticated() -> bool:
+    return bool(st.session_state.get("company_brain_authenticated"))
 
 
 def _render_password_gate() -> None:
@@ -118,8 +122,12 @@ def _render_password_gate() -> None:
         )
         submitted = st.form_submit_button("Unlock", type="primary")
 
-    if submitted and not _password_is_valid():
-        st.error("Wrong password.")
+    if submitted:
+        if _entered_password_is_valid():
+            st.session_state.company_brain_authenticated = True
+            st.rerun()
+        else:
+            st.error("Wrong password.")
 
 
 @st.cache_resource
@@ -258,7 +266,7 @@ def _render_setup_check(missing_env: list[str]) -> bool:
     return False
 
 
-if not _password_is_valid():
+if not _is_authenticated():
     _render_password_gate()
     st.stop()
 
