@@ -44,6 +44,7 @@ supabase/migrations/001_initial_schema.sql
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
@@ -74,6 +75,13 @@ To test only Supabase connectivity without calling OpenAI:
 
 ```bash
 python3 check_backend.py --skip-openai
+```
+
+## Developer tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests
 ```
 
 ## Batch Ingestion

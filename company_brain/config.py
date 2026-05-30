@@ -1,47 +1,32 @@
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-
 from dotenv import load_dotenv
+from pydantic import BaseSettings, Field
 
 
 load_dotenv()
 
 
-@dataclass(frozen=True)
-class Settings:
-    openai_api_key: str
-    supabase_url: str
-    supabase_service_role_key: str
-    supabase_storage_bucket: str = "rag-documents"
-    embedding_model: str = "text-embedding-3-small"
-    answer_model: str = "gpt-4.1-mini"
-    chunk_size: int = 1200
-    chunk_overlap: int = 180
-    retrieval_top_k: int = 8
-    similarity_threshold: float = 0.2
-    use_openai: bool = True
+class Settings(BaseSettings):
+    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
+    supabase_url: str = Field(..., env="SUPABASE_URL")
+    supabase_service_role_key: str = Field(..., env="SUPABASE_SERVICE_ROLE_KEY")
+    supabase_storage_bucket: str = Field("rag-documents", env="SUPABASE_STORAGE_BUCKET")
+    embedding_model: str = Field("text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
+    answer_model: str = Field("gpt-4.1-mini", env="OPENAI_ANSWER_MODEL")
+    chunk_size: int = Field(1200, env="CHUNK_SIZE")
+    chunk_overlap: int = Field(180, env="CHUNK_OVERLAP")
+    retrieval_top_k: int = Field(8, env="RETRIEVAL_TOP_K")
+    similarity_threshold: float = Field(0.2, env="SIMILARITY_THRESHOLD")
+    use_openai: bool = Field(True, env="USE_OPENAI")
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
 
     @classmethod
     def from_env(cls) -> "Settings":
-        return cls(
-            openai_api_key=_required("OPENAI_API_KEY"),
-            supabase_url=_required("SUPABASE_URL"),
-            supabase_service_role_key=_required("SUPABASE_SERVICE_ROLE_KEY"),
-            supabase_storage_bucket=os.getenv(
-                "SUPABASE_STORAGE_BUCKET", cls.supabase_storage_bucket
-            ),
-            embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", cls.embedding_model),
-            answer_model=os.getenv("OPENAI_ANSWER_MODEL", cls.answer_model),
-            chunk_size=int(os.getenv("CHUNK_SIZE", cls.chunk_size)),
-            chunk_overlap=int(os.getenv("CHUNK_OVERLAP", cls.chunk_overlap)),
-            retrieval_top_k=int(os.getenv("RETRIEVAL_TOP_K", cls.retrieval_top_k)),
-            similarity_threshold=float(
-                os.getenv("SIMILARITY_THRESHOLD", cls.similarity_threshold)
-            ),
-            use_openai=_bool_env("USE_OPENAI", cls.use_openai),
-        )
+        return cls()
 
 
 def find_placeholder_settings(settings: Settings) -> list[str]:
@@ -55,20 +40,6 @@ def find_placeholder_settings(settings: Settings) -> list[str]:
     return placeholders
 
 
-def _required(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
-
-
 def _looks_like_placeholder(value: str) -> bool:
-    lowered = value.lower()
+    lowered = value.strip().lower()
     return lowered in {"sk-...", "your-service-role-key"} or "your-project" in lowered
-
-
-def _bool_env(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
