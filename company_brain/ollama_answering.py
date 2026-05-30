@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -39,6 +40,8 @@ class OllamaAnswerGenerator:
 
         prompt = _build_prompt(question, chunks, expert, answer_style)
         answer = self._generate(prompt).strip()
+        if not answer or _looks_like_refusal(answer):
+            return _fallback_answer_from_evidence(chunks, answer_style)
         return GeneratedAnswer(
             answer=answer,
             sources=_unique_sources(chunks),
@@ -149,6 +152,71 @@ def _answer_if_exact_term_missing(
         sources=_unique_sources(chunks),
         confidence="Low",
     )
+
+
+def _looks_like_refusal(answer: str) -> bool:
+    lowered = answer.lower()
+    refusal_markers = [
+        "i can't assist",
+        "i cannot assist",
+        "i'm sorry, but i can't",
+        "i am sorry, but i can't",
+    ]
+    return any(marker in lowered for marker in refusal_markers)
+
+
+def _fallback_answer_from_evidence(
+    chunks: list[RetrievedChunk],
+    answer_style: str,
+) -> GeneratedAnswer:
+    if answer_style == "plain":
+        excerpt = _clean_whitespace(chunks[0].content[:700])
+        answer = (
+            "The selected evidence directly matches the question. "
+            f"It states: {excerpt}"
+        )
+    else:
+        sections = _extract_case_sections(chunks[0].content)
+        answer = "\n\n".join(
+            f"### {heading}\n{sections.get(key, 'Not specified in the selected case.')}"
+            for key, heading in [
+                ("problem", "Problem"),
+                ("decision", "Decision"),
+                ("reasoning", "Reasoning"),
+                ("regulatory_requirements", "Regulatory Requirement"),
+                ("risks", "Risks"),
+            ]
+        )
+    return GeneratedAnswer(
+        answer=answer,
+        sources=_unique_sources(chunks),
+        confidence="Medium",
+    )
+
+
+def _extract_case_sections(content: str) -> dict[str, str]:
+    labels = {
+        "problem": "Problem",
+        "regulatory_requirements": "Regulatory Requirements",
+        "options_considered": "Options Considered",
+        "decision": "Decision",
+        "reasoning": "Reasoning",
+        "risks": "Risks",
+    }
+    pattern = "|".join(re.escape(label) for label in labels.values())
+    matches = list(re.finditer(rf"\b({pattern})\b", content))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        label = match.group(1)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        key = next(key for key, value in labels.items() if value == label)
+        sections[key] = _clean_whitespace(content[start:end])
+    return sections
+
+
+def _clean_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _unique_sources(chunks: list[RetrievedChunk]) -> list[str]:
