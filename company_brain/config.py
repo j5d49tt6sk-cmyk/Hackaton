@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 
 load_dotenv()
@@ -10,8 +10,11 @@ load_dotenv()
 
 class Settings(BaseSettings):
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
-    supabase_url: str = Field(..., env="SUPABASE_URL")
-    supabase_service_role_key: str = Field(..., env="SUPABASE_SERVICE_ROLE_KEY")
+    supabase_url: str = Field(
+        ...,
+        validation_alias=AliasChoices("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"),
+    )
+    supabase_service_role_key: str = Field("", env="SUPABASE_SERVICE_ROLE_KEY")
     supabase_storage_bucket: str = Field("rag-documents", env="SUPABASE_STORAGE_BUCKET")
     embedding_model: str = Field("text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     answer_model: str = Field("gpt-4.1-mini", env="OPENAI_ANSWER_MODEL")

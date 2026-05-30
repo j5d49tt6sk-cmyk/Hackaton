@@ -40,7 +40,7 @@ class OllamaAnswerGenerator:
 
         prompt = _build_prompt(question, chunks, expert, answer_style)
         answer = self._generate(prompt).strip()
-        if not answer or _looks_like_refusal(answer):
+        if not answer or _looks_like_refusal(answer) or _ollama_is_unreachable(answer):
             return _fallback_answer_from_evidence(chunks, answer_style)
         return GeneratedAnswer(
             answer=answer,
@@ -115,6 +115,13 @@ def _build_prompt(
             "Requirement, or Risks. Mention uncertainty clearly if the evidence is "
             "thin."
         )
+    elif answer_style == "case_open":
+        answer_instruction = (
+            "Return exactly these Markdown sections in this order: Problem, "
+            "Decision, Reasoning, Regulations Used, Risks. Keep Risks as the final "
+            "section. Use only the selected evidence and do not add general "
+            "knowledge."
+        )
     else:
         answer_instruction = (
             "Structure useful answers with Problem, Decision, Reasoning, Regulatory "
@@ -165,6 +172,10 @@ def _looks_like_refusal(answer: str) -> bool:
     return any(marker in lowered for marker in refusal_markers)
 
 
+def _ollama_is_unreachable(answer: str) -> bool:
+    return "ollama is not reachable" in answer.lower()
+
+
 def _fallback_answer_from_evidence(
     chunks: list[RetrievedChunk],
     answer_style: str,
@@ -174,6 +185,27 @@ def _fallback_answer_from_evidence(
         answer = (
             "The selected evidence directly matches the question. "
             f"It states: {excerpt}"
+        )
+    elif answer_style == "case_open":
+        sections = _extract_case_sections(chunks[0].content)
+        problem = sections.get("problem", "Not specified in the selected case.")
+        answer = "\n\n".join(
+            [
+                f"### Problem\n{problem}",
+                (
+                    "### Decision\n"
+                    f"{sections.get('decision', 'Not specified in the selected case.')}"
+                ),
+                (
+                    "### Reasoning\n"
+                    f"{sections.get('reasoning', 'Not specified in the selected case.')}"
+                ),
+                (
+                    "### Regulations Used\n"
+                    f"{sections.get('regulatory_requirements', 'Not specified in the selected case.')}"
+                ),
+                f"### Risks\n{sections.get('risks', 'Not specified in the selected case.')}",
+            ]
         )
     else:
         sections = _extract_case_sections(chunks[0].content)

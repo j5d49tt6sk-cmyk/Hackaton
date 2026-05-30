@@ -32,6 +32,7 @@ class AnswerGenerator:
         question: str,
         chunks: list[RetrievedChunk],
         expert: str | None = None,
+        answer_style: str = "case",
     ) -> GeneratedAnswer:
         if not chunks:
             return GeneratedAnswer(
@@ -52,7 +53,7 @@ class AnswerGenerator:
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": _system_prompt()},
+                {"role": "system", "content": _system_prompt(answer_style)},
                 {
                     "role": "user",
                     "content": json.dumps(
@@ -88,8 +89,8 @@ class AnswerGenerator:
         )
 
 
-def _system_prompt() -> str:
-    return (
+def _system_prompt(answer_style: str = "case") -> str:
+    base_prompt = (
         "You are Company Brain, an evidence-based organizational knowledge system. "
         "The retrieved_context contains excerpts from uploaded scripts, transcripts, "
         "documents, and spreadsheets. Answer only from the retrieved_context provided "
@@ -97,17 +98,33 @@ def _system_prompt() -> str:
         "answer is missing from the context, say that the indexed uploads do not "
         "contain enough information. "
         "The user is often looking for historical cases where former employees solved "
-        "similar problems. When evidence is available, structure the answer as a case "
-        "card with these Markdown sections: Problem, Decision, Reasoning, Regulatory "
-        "Requirement, Risks, and Similar Cases or Evidence. Cite file names in the "
-        "sources list. Use confidence High only when several strong chunks directly "
-        "answer the question, Medium when evidence is partial but useful, and Low "
-        "when evidence is weak or missing. If the context contains decisions, "
-        "alternatives, reasoning, or outcomes, include a decision_trail field with "
-        "the sections Problem, Decision, Reasoning, Regulatory Requirement, Risks, "
-        "and Outcome. Return strict JSON with keys answer, sources, confidence, "
-        "decision_trail."
+        "similar problems. "
     )
+    if answer_style == "case_open":
+        section_prompt = (
+            "When a specific case is opened, structure the answer with exactly these "
+            "Markdown sections in this order: Problem, Decision, Reasoning, "
+            "Regulations Used, Risks. Keep Risks as the final section. Cite file "
+            "names in the sources list. Use confidence High only when the selected "
+            "case directly contains the decision, reasoning, and regulations, "
+            "Medium when evidence is partial, and Low when evidence is weak or "
+            "missing. Return strict JSON with keys answer, sources, confidence, "
+            "decision_trail."
+        )
+    else:
+        section_prompt = (
+            "When evidence is available, structure the answer as a case card with "
+            "these Markdown sections: Problem, Decision, Reasoning, Regulatory "
+            "Requirement, Risks, and Similar Cases or Evidence. Cite file names in "
+            "the sources list. Use confidence High only when several strong chunks "
+            "directly answer the question, Medium when evidence is partial but "
+            "useful, and Low when evidence is weak or missing. If the context "
+            "contains decisions, alternatives, reasoning, or outcomes, include a "
+            "decision_trail field with the sections Problem, Decision, Reasoning, "
+            "Regulatory Requirement, Risks, and Outcome. Return strict JSON with "
+            "keys answer, sources, confidence, decision_trail."
+        )
+    return base_prompt + section_prompt
 
 
 def _chunk_to_context(chunk: RetrievedChunk) -> dict[str, object]:
