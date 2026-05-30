@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 
 import streamlit as st
 
@@ -12,6 +14,30 @@ from company_brain.retrieval import EXPERT_OPTIONS, Retriever, expert_for_ui_cho
 
 
 logging.basicConfig(level=logging.INFO)
+
+
+if __name__ == "__main__" and not os.getenv("COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPED"):
+    env = os.environ.copy()
+    env["COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPED"] = "1"
+    raise SystemExit(
+        subprocess.call(
+            [
+                sys.executable,
+                "-m",
+                "streamlit",
+                "run",
+                __file__,
+                "--server.port",
+                "8501",
+                "--server.headless",
+                "false",
+                "--browser.gatherUsageStats",
+                "false",
+            ],
+            env=env,
+        )
+    )
+
 
 st.set_page_config(page_title="Company Brain", layout="wide")
 
@@ -47,6 +73,29 @@ REQUIRED_ENV_VARS = [
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
 ]
+
+
+def _password_is_valid() -> bool:
+    expected_password = os.getenv("COMPANY_BRAIN_PASSWORD", "realesthacks")
+    entered_password = st.session_state.get("company_brain_password", "")
+    return entered_password == expected_password
+
+
+def _render_password_gate() -> None:
+    st.title("Company Brain")
+    st.caption("Protected access for the hackathon demo.")
+
+    with st.form("password_form"):
+        st.text_input(
+            "Password",
+            type="password",
+            key="company_brain_password",
+            placeholder="Enter access password",
+        )
+        submitted = st.form_submit_button("Unlock", type="primary")
+
+    if submitted and not _password_is_valid():
+        st.error("Wrong password.")
 
 
 @st.cache_resource
@@ -183,6 +232,11 @@ def _render_setup_check(missing_env: list[str]) -> bool:
     for name in missing_env:
         st.markdown(f"- `{name}`")
     return False
+
+
+if not _password_is_valid():
+    _render_password_gate()
+    st.stop()
 
 
 expert_choice, top_k, show_chunks = _render_sidebar()
