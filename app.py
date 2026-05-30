@@ -364,6 +364,12 @@ def _case_title(chunk: RetrievedChunk) -> str:
     return title.replace("_", " ").strip()
 
 
+def _is_case_chunk(chunk: RetrievedChunk) -> bool:
+    file_name = chunk.file_name or ""
+    source = chunk.source or ""
+    return file_name.startswith("Case_") or "data_cases/" in source
+
+
 def _similarity_percent(value: float) -> int:
     return round(max(0.0, min(value, 1.0)) * 100)
 
@@ -396,6 +402,19 @@ def _build_similar_cases(chunks: list[RetrievedChunk]) -> list[dict[str, object]
         key=lambda case: float(case["best_similarity"]),
         reverse=True,
     )
+
+
+def _retrieve_similar_case_chunks(
+    question: str,
+    expert_choice: str,
+) -> list[RetrievedChunk]:
+    chunks = _retrieve_company_brain(
+        question,
+        expert_choice,
+        top_k=5000 if _uses_ollama_backend() else 60,
+    )
+    case_chunks = [chunk for chunk in chunks if _is_case_chunk(chunk)]
+    return case_chunks or chunks
 
 
 def _remember_case_overview(
@@ -777,10 +796,9 @@ with main_column:
             )
             with st.spinner("Searching similar cases..."):
                 try:
-                    chunks = _retrieve_company_brain(
+                    chunks = _retrieve_similar_case_chunks(
                         question,
                         expert_choice,
-                        top_k=max(top_k, 30),
                     )
                 except RuntimeError as exc:
                     st.error(str(exc))
