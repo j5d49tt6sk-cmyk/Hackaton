@@ -409,6 +409,10 @@ def _remember_case_overview(
     st.session_state.pop("case_result", None)
 
 
+def _return_to_case_overview() -> None:
+    st.session_state.pop("case_result", None)
+
+
 def _render_case_overview(
     overview: dict[str, object],
     expert_choice: str,
@@ -785,6 +789,13 @@ with main_column:
 
         case_result = _stored_result("case")
         if case_result:
+            if st.button(
+                "Back to Similar Cases",
+                key="back_to_similar_cases",
+                use_container_width=True,
+            ):
+                _return_to_case_overview()
+                st.rerun()
             _render_answer_block(
                 case_result["answer"],
                 case_result["chunks"],
