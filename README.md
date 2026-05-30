@@ -16,7 +16,7 @@ company_brain/
   config.py           Environment variable settings
   embeddings.py       OpenAI embedding client
   ingestion.py        Recursive ingestion pipeline
-  loaders.py          PDF, XLSX, TXT, MD, and CSV readers
+  loaders.py          PDF, XLSX, DOCX, TXT, MD, and CSV readers
   metadata.py         Expert/topic inference from file paths
   models.py           Typed data models
   retrieval.py        Vector retrieval and Expert Twin filtering
@@ -67,6 +67,7 @@ Fill in `.env`:
 OPENAI_API_KEY=...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
+COMPANY_BRAIN_PASSWORD=realesthacks
 ```
 
 Use the Supabase service role key only on the backend or local demo machine.
@@ -78,6 +79,7 @@ The pipeline recursively scans a file or folder and supports:
 
 - PDF
 - XLSX
+- DOCX
 - TXT
 - MD
 - CSV
@@ -103,15 +105,24 @@ Without overrides, the pipeline infers Expert Twins from file and folder names:
 ## Run the Demo UI
 
 ```bash
-streamlit run app.py
+python3 app.py
 ```
+
+In VS Code, open `app.py` and press Run. If dependencies are missing, install
+them once with:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+The app opens on the first free port starting at `8501`. Use the terminal output
+URL, usually `http://localhost:8501`. The demo password is `realesthacks`.
 
 The UI supports:
 
-- Ask Company Brain
-- Ask Compliance Expert
-- Ask ESG Expert
-- Ask Internal Expert
+- Guided case questionnaire
+- Direct questions
+- Expert Twin filtering
 - Retrieved evidence inspection
 - Source citations
 - Confidence labels

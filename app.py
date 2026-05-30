@@ -1,22 +1,38 @@
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
+import socket
 import subprocess
 import sys
-
-import streamlit as st
-
-from company_brain.answering import AnswerGenerator
-from company_brain.config import Settings
-from company_brain.models import GeneratedAnswer, RetrievedChunk
-from company_brain.retrieval import EXPERT_OPTIONS, Retriever, expert_for_ui_choice
-
 
 logging.basicConfig(level=logging.INFO)
 
 
+def _module_is_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _find_free_port(start_port: int = 8501, attempts: int = 20) -> int:
+    for port in range(start_port, start_port + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+            try:
+                handle.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("Could not find a free port for Streamlit.")
+
+
 if __name__ == "__main__" and not os.getenv("COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPED"):
+    if not _module_is_available("streamlit"):
+        print("Streamlit is not installed yet.")
+        print("Run this once from the project folder:")
+        print(f"{sys.executable} -m pip install -r requirements.txt")
+        raise SystemExit(1)
+
+    port = str(_find_free_port())
     env = os.environ.copy()
     env["COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPED"] = "1"
     raise SystemExit(
@@ -28,7 +44,7 @@ if __name__ == "__main__" and not os.getenv("COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPE
                 "run",
                 __file__,
                 "--server.port",
-                "8501",
+                port,
                 "--server.headless",
                 "false",
                 "--browser.gatherUsageStats",
@@ -37,6 +53,14 @@ if __name__ == "__main__" and not os.getenv("COMPANY_BRAIN_STREAMLIT_BOOTSTRAPPE
             env=env,
         )
     )
+
+
+import streamlit as st
+
+from company_brain.answering import AnswerGenerator
+from company_brain.config import Settings
+from company_brain.models import GeneratedAnswer, RetrievedChunk
+from company_brain.retrieval import EXPERT_OPTIONS, Retriever, expert_for_ui_choice
 
 
 st.set_page_config(page_title="Company Brain", layout="wide")
