@@ -310,24 +310,150 @@ def _run_company_brain(
     top_k: int,
     answer_style: str = "case",
 ) -> tuple[GeneratedAnswer, list[RetrievedChunk]]:
+    chunks = _retrieve_company_brain(question, expert_choice, top_k)
+    generated = _generate_company_brain_answer(
+        question,
+        chunks,
+        expert_choice,
+        answer_style=answer_style,
+    )
+    return generated, chunks
+
+
+def _retrieve_company_brain(
+    question: str,
+    expert_choice: str,
+    top_k: int,
+) -> list[RetrievedChunk]:
     selected_expert = expert_for_ui_choice(expert_choice)
     if _uses_ollama_backend():
-        chunks = _local_knowledge_store().retrieve(
+        return _local_knowledge_store().retrieve(
             question,
             expert=selected_expert,
             top_k=top_k,
         )
-        generated = _ollama_answer_generator().generate(
+
+    return _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
+
+
+def _generate_company_brain_answer(
+    question: str,
+    chunks: list[RetrievedChunk],
+    expert_choice: str,
+    answer_style: str = "case",
+) -> GeneratedAnswer:
+    selected_expert = expert_for_ui_choice(expert_choice)
+    if _uses_ollama_backend():
+        return _ollama_answer_generator().generate(
             question,
             chunks,
             selected_expert,
             answer_style=answer_style,
         )
-        return generated, chunks
+    return _answer_generator().generate(question, chunks, selected_expert)
 
-    chunks = _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
-    generated = _answer_generator().generate(question, chunks, selected_expert)
-    return generated, chunks
+
+def _case_key(chunk: RetrievedChunk) -> str:
+    return chunk.file_name or chunk.source or f"chunk-{chunk.id}"
+
+
+def _case_title(chunk: RetrievedChunk) -> str:
+    title = chunk.topic or chunk.file_name or chunk.source or "Untitled case"
+    if title.endswith((".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv")):
+        title = Path(title).stem
+    return title.replace("_", " ").strip()
+
+
+def _similarity_percent(value: float) -> int:
+    return round(max(0.0, min(value, 1.0)) * 100)
+
+
+def _build_similar_cases(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
+    cases: dict[str, dict[str, object]] = {}
+    for chunk in chunks:
+        key = _case_key(chunk)
+        case = cases.setdefault(
+            key,
+            {
+                "key": key,
+                "title": _case_title(chunk),
+                "best_similarity": chunk.similarity,
+                "chunks": [],
+            },
+        )
+        case["best_similarity"] = max(float(case["best_similarity"]), chunk.similarity)
+        case_chunks = case["chunks"]
+        if isinstance(case_chunks, list):
+            case_chunks.append(chunk)
+
+    for case in cases.values():
+        case_chunks = case["chunks"]
+        if isinstance(case_chunks, list):
+            case_chunks.sort(key=lambda chunk: chunk.similarity, reverse=True)
+
+    return sorted(
+        cases.values(),
+        key=lambda case: float(case["best_similarity"]),
+        reverse=True,
+    )
+
+
+def _remember_case_overview(
+    question: str,
+    cases: list[dict[str, object]],
+) -> None:
+    st.session_state.case_overview = {
+        "question": question,
+        "cases": cases,
+    }
+    st.session_state.pop("case_result", None)
+
+
+def _render_case_overview(
+    overview: dict[str, object],
+    expert_choice: str,
+) -> None:
+    cases = overview.get("cases", [])
+    question = str(overview.get("question", ""))
+
+    st.subheader("Similar Cases")
+    if not isinstance(cases, list) or not cases:
+        st.info("No similar cases were found in the indexed documents.")
+        return
+
+    for index, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            continue
+        chunks = case.get("chunks", [])
+        if not isinstance(chunks, list):
+            continue
+        title = str(case.get("title") or "Untitled case")
+        similarity = _similarity_percent(float(case.get("best_similarity", 0.0)))
+
+        title_column, match_column, action_column = st.columns([0.62, 0.18, 0.20])
+        with title_column:
+            st.markdown(f"**{index}. {title}**")
+            if chunks:
+                source = chunks[0].file_name or chunks[0].source or "Unknown source"
+                st.caption(source)
+        with match_column:
+            st.metric("Match", f"{similarity}%")
+        with action_column:
+            if st.button("Select", key=f"select_case_{index}", use_container_width=True):
+                with st.spinner("Building answer from the selected case..."):
+                    answer = _generate_company_brain_answer(
+                        question,
+                        chunks,
+                        expert_choice,
+                        answer_style="case",
+                    )
+                _remember_result(question, answer, chunks, mode="case")
+                _persist_chat_message("user", question)
+                _persist_chat_message("assistant", answer.answer, chunks)
+                st.rerun()
+
+        with st.expander("Preview evidence"):
+            _render_evidence(chunks[:3])
 
 
 def _session_id() -> str:
@@ -645,15 +771,17 @@ with main_column:
                 known_regulation=known_regulation,
                 focus=focus,
             )
-            with st.spinner("Searching indexed knowledge and building a case card..."):
+            with st.spinner("Searching similar cases..."):
                 try:
-                    _persist_chat_message("user", question)
-                    answer, chunks = _run_company_brain(question, expert_choice, top_k)
+                    chunks = _retrieve_company_brain(
+                        question,
+                        expert_choice,
+                        top_k=max(top_k, 30),
+                    )
                 except RuntimeError as exc:
                     st.error(str(exc))
                 else:
-                    _remember_result(question, answer, chunks, mode="case")
-                    _persist_chat_message("assistant", answer.answer, chunks)
+                    _remember_case_overview(question, _build_similar_cases(chunks))
 
         case_result = _stored_result("case")
         if case_result:
@@ -661,6 +789,10 @@ with main_column:
                 case_result["answer"],
                 case_result["chunks"],
             )
+        else:
+            case_overview = st.session_state.get("case_overview")
+            if isinstance(case_overview, dict):
+                _render_case_overview(case_overview, expert_choice)
 
     else:
         st.subheader("Quick Question")
