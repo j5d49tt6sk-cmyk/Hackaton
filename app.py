@@ -381,7 +381,7 @@ with guided_tab:
             placeholder="Example: tax evasion, FATCA, MiFID, ESG disclosure",
         )
         situation = st.text_area(
-            "Describe the situation in normal words",
+            "Describe the situation",
             placeholder=(
                 "Example: A client setup looks like it might avoid tax reporting. "
                 "I want to know how similar cases were handled before."
