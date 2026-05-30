@@ -1,39 +1,130 @@
-# Hackaton
+# Company Brain
 
-Repository fuer unser Gruppenprojekt.
+Company Brain is an AI-powered knowledge platform for preserving organizational
+intelligence, expert knowledge, decision history, and institutional memory.
 
-## Start
+It is designed for a SIX hackathon demo and focuses on evidence-based answers,
+source traceability, onboarding acceleration, and Expert Twins for specific
+knowledge domains.
 
-Hier koennen Projektbeschreibung, Setup-Schritte und Aufgaben fuer die Gruppe dokumentiert werden.
+## Architecture
 
-## Team
+```text
+company_brain/
+  answering.py        Grounded answer generation with sources and confidence
+  chunking.py         Text normalization and chunk splitting
+  config.py           Environment variable settings
+  embeddings.py       OpenAI embedding client
+  ingestion.py        Recursive ingestion pipeline
+  loaders.py          PDF, XLSX, TXT, MD, and CSV readers
+  metadata.py         Expert/topic inference from file paths
+  models.py           Typed data models
+  retrieval.py        Vector retrieval and Expert Twin filtering
+  supabase_store.py   Supabase insert and match RPC wrapper
 
-Tragt euch in `TEAM.md` ein, damit klar ist, wer am Projekt mitarbeitet.
-
-## Mitmachen
-
-1. Repository klonen:
-
-```bash
-git clone <repo-url>
-cd Hackaton
+ingest.py             CLI for indexing documents
+app.py                Streamlit chat UI
+sql/match_documents.sql
+                      Supabase pgvector RPC and indexes
 ```
 
-2. Neue Aenderungen holen:
+## Supabase Setup
 
-```bash
-git pull
+Create the `documents` table:
+
+```sql
+create table documents (
+  id bigserial primary key,
+  content text not null,
+  source text,
+  file_name text,
+  expert text,
+  topic text,
+  chunk_index int,
+  metadata jsonb,
+  embedding vector(1536)
+);
 ```
 
-3. Eigene Aenderungen speichern:
+Then run `sql/match_documents.sql` in the Supabase SQL editor. It creates:
+
+- `match_documents(...)` RPC for vector similarity search
+- HNSW cosine index on `embedding`
+- B-tree index on `expert`
+
+## Local Setup
 
 ```bash
-git add .
-git commit -m "Kurze Beschreibung"
-git push
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-## Freunde hinzufuegen
+Fill in `.env`:
 
-Auf GitHub oder GitLab musst du deine Freunde als Collaborators/Members einladen.
-Danach koennen sie das Repository klonen, bearbeiten und pushen.
+```bash
+OPENAI_API_KEY=...
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+Use the Supabase service role key only on the backend or local demo machine.
+Do not expose it in a public frontend.
+
+## Ingest Documents
+
+The pipeline recursively scans a file or folder and supports:
+
+- PDF
+- XLSX
+- TXT
+- MD
+- CSV
+
+```bash
+python ingest.py ./data
+```
+
+Optional overrides:
+
+```bash
+python ingest.py ./data/compliance --expert "Compliance Expert" --topic "MiFID"
+python ingest.py ./data/esg --expert "ESG Expert"
+python ingest.py ./data/transcripts --expert "Internal Expert"
+```
+
+Without overrides, the pipeline infers Expert Twins from file and folder names:
+
+- Compliance Expert: MiFID, FATCA, SFDR, compliance, regulatory
+- ESG Expert: ESG, sustainability, taxonomy, climate
+- Internal Expert: meeting, transcript, minutes, internal, discussion
+
+## Run the Demo UI
+
+```bash
+streamlit run app.py
+```
+
+The UI supports:
+
+- Ask Company Brain
+- Ask Compliance Expert
+- Ask ESG Expert
+- Ask Internal Expert
+- Retrieved evidence inspection
+- Source citations
+- Confidence labels
+- Decision Trail generation when the retrieved context contains decisions,
+  alternatives, reasoning, or outcomes
+
+## Retrieval Flow
+
+1. Embed the user question with `text-embedding-3-small`
+2. Call Supabase RPC `match_documents`
+3. Optionally filter by `expert`
+4. Return chunks with similarity scores
+5. Generate an answer using only retrieved chunks
+
+If the retrieved documents do not contain enough information, the model is
+instructed to say so instead of inventing an answer.
