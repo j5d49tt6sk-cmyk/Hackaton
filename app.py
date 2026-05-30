@@ -146,14 +146,6 @@ st.markdown(
 )
 
 
-CASE_TYPES = [
-    "Find a similar past case",
-    "Check regulatory requirements",
-    "Understand risks",
-    "Reconstruct why a decision was made",
-    "Prepare an escalation or handover",
-]
-
 BUSINESS_AREAS = [
     "Not sure",
     "Tax / FATCA",
@@ -877,7 +869,6 @@ with main_column:
         )
 
         with st.form("guided_case_form"):
-            case_type = st.selectbox("What do you need?", CASE_TYPES)
             business_area = st.selectbox("Which area sounds closest?", BUSINESS_AREAS)
             keyword = st.text_input(
                 "Keyword or topic",
@@ -908,7 +899,7 @@ with main_column:
 
         if submitted and is_configured:
             question = _build_guided_question(
-                case_type=case_type,
+                case_type="Find a similar past case",
                 keyword=keyword,
                 business_area=business_area,
                 situation=situation,
