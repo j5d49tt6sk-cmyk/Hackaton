@@ -1,17 +1,52 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import streamlit as st
 
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
+from company_brain.models import GeneratedAnswer, RetrievedChunk
 from company_brain.retrieval import EXPERT_OPTIONS, Retriever, expert_for_ui_choice
 
 
 logging.basicConfig(level=logging.INFO)
 
 st.set_page_config(page_title="Company Brain", layout="wide")
+
+
+CASE_TYPES = [
+    "Find a similar past case",
+    "Check regulatory requirements",
+    "Understand risks",
+    "Reconstruct why a decision was made",
+    "Prepare an escalation or handover",
+]
+
+BUSINESS_AREAS = [
+    "Not sure",
+    "Tax / FATCA",
+    "MiFID / Product governance",
+    "ESG / SFDR",
+    "Client onboarding",
+    "Reference data",
+    "Internal process",
+]
+
+OUTPUT_FOCUS = [
+    "Decision",
+    "Reasoning",
+    "Regulatory requirement",
+    "Risks",
+    "Sources",
+]
+
+REQUIRED_ENV_VARS = [
+    "OPENAI_API_KEY",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+]
 
 
 @st.cache_resource
@@ -29,63 +64,231 @@ def _answer_generator() -> AnswerGenerator:
     return AnswerGenerator(_settings())
 
 
-def _format_answer(answer: str, sources: list[str], confidence: str) -> str:
-    source_lines = "\n".join(f"- {source}" for source in sources) or "- No sources found"
-    return f"### Answer\n{answer}\n\n### Sources\n{source_lines}\n\n### Confidence\n{confidence}"
+def _missing_environment() -> list[str]:
+    return [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
 
+
+def _format_answer(answer: GeneratedAnswer) -> str:
+    source_lines = "\n".join(f"- {source}" for source in answer.sources)
+    if not source_lines:
+        source_lines = "- No sources found"
+    return (
+        f"{answer.answer}\n\n"
+        f"### Sources\n{source_lines}\n\n"
+        f"### Confidence\n{answer.confidence}"
+    )
+
+
+def _build_guided_question(
+    case_type: str,
+    keyword: str,
+    business_area: str,
+    situation: str,
+    known_regulation: str,
+    focus: list[str],
+) -> str:
+    focus_text = ", ".join(focus) if focus else ", ".join(OUTPUT_FOCUS)
+    parts = [
+        "Search the company knowledge base for relevant historical cases.",
+        f"Task: {case_type}.",
+        f"Business area: {business_area}.",
+        f"Keyword or topic: {keyword or 'not provided'}.",
+        f"Situation: {situation or 'not provided'}.",
+        f"Known regulation or policy: {known_regulation or 'not provided'}.",
+        (
+            "Return the answer as a practical case card with Problem, Decision, "
+            "Reasoning, Regulatory Requirement, Risks, Similar Cases or Evidence, "
+            f"and Sources. Emphasize: {focus_text}."
+        ),
+    ]
+    return "\n".join(parts)
+
+
+def _run_company_brain(
+    question: str,
+    expert_choice: str,
+    top_k: int,
+) -> tuple[GeneratedAnswer, list[RetrievedChunk]]:
+    selected_expert = expert_for_ui_choice(expert_choice)
+    chunks = _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
+    generated = _answer_generator().generate(question, chunks, selected_expert)
+    return generated, chunks
+
+
+def _render_result(
+    answer: GeneratedAnswer,
+    chunks: list[RetrievedChunk],
+    show_chunks: bool,
+) -> None:
+    st.markdown(_format_answer(answer))
+
+    if answer.decision_trail:
+        st.markdown("### Decision Trail")
+        st.markdown(answer.decision_trail)
+
+    if show_chunks:
+        _render_evidence(chunks)
+
+
+def _render_evidence(chunks: list[RetrievedChunk]) -> None:
+    st.markdown("### Retrieved Evidence")
+    if not chunks:
+        st.info("No matching evidence was found in the indexed documents.")
+        return
+    for chunk in chunks:
+        title = f"{chunk.file_name or chunk.source} | similarity {chunk.similarity:.3f}"
+        with st.expander(title):
+            st.write(chunk.content)
+            st.json(
+                {
+                    "expert": chunk.expert,
+                    "topic": chunk.topic,
+                    "chunk_index": chunk.chunk_index,
+                    "metadata": chunk.metadata,
+                }
+            )
+
+
+def _render_sidebar() -> tuple[str, int, bool]:
+    with st.sidebar:
+        st.header("Search Settings")
+        expert_choice = st.radio("Knowledge area", list(EXPERT_OPTIONS.keys()))
+        top_k = st.slider("Evidence depth", min_value=3, max_value=15, value=8)
+        show_chunks = st.toggle("Show retrieved evidence", value=False)
+        st.divider()
+        st.caption(
+            "Use Company Brain for broad search, or choose an expert when the "
+            "question clearly belongs to one knowledge area."
+        )
+    return expert_choice, top_k, show_chunks
+
+
+def _render_setup_check(missing_env: list[str]) -> bool:
+    if not missing_env:
+        return True
+
+    st.warning("Company Brain is open, but the backend is not configured yet.")
+    st.write(
+        "The questionnaire UI is ready. To make the search work, add the missing "
+        "credentials and ingest the SIX documents once."
+    )
+    st.code(
+        "cp .env.example .env\n"
+        "# then fill in OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY\n"
+        "python3 ingest.py SIX_Hack_Zurich\n"
+        "python3 -m streamlit run app.py --server.port 8501",
+        language="bash",
+    )
+    st.write("Missing configuration:")
+    for name in missing_env:
+        st.markdown(f"- `{name}`")
+    return False
+
+
+expert_choice, top_k, show_chunks = _render_sidebar()
 
 st.title("Company Brain")
-st.caption("Evidence-based organizational memory for SIX knowledge domains.")
+st.caption("Guided search for past decisions, regulations, reasoning, and risks.")
 
-with st.sidebar:
-    expert_choice = st.radio("Expert Twin", list(EXPERT_OPTIONS.keys()))
-    top_k = st.slider("Retrieved chunks", min_value=3, max_value=15, value=8)
-    show_chunks = st.toggle("Show retrieved evidence", value=True)
+is_configured = _render_setup_check(_missing_environment())
 
-question = st.chat_input("Ask about decisions, regulations, onboarding, or expert context")
+guided_tab, direct_tab = st.tabs(["Guided Case Finder", "Direct Question"])
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+with guided_tab:
+    st.subheader("Case Questionnaire")
+    st.write(
+        "Fill in what you know. The app will turn it into a structured search "
+        "and return a case-style answer with decision logic and sources."
+    )
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    with st.form("guided_case_form"):
+        case_type = st.selectbox("What do you need?", CASE_TYPES)
+        business_area = st.selectbox("Which area sounds closest?", BUSINESS_AREAS)
+        keyword = st.text_input(
+            "Keyword or topic",
+            placeholder="Example: tax evasion, FATCA, MiFID, ESG disclosure",
+        )
+        situation = st.text_area(
+            "Describe the situation in normal words",
+            placeholder=(
+                "Example: A client setup looks like it might avoid tax reporting. "
+                "I want to know how similar cases were handled before."
+            ),
+            height=140,
+        )
+        known_regulation = st.text_input(
+            "Known regulation or policy, if any",
+            placeholder="Example: FATCA, MiFID II, SFDR, internal tax navigator",
+        )
+        focus = st.multiselect(
+            "What should the answer focus on?",
+            OUTPUT_FOCUS,
+            default=OUTPUT_FOCUS,
+        )
+        submitted = st.form_submit_button(
+            "Find Relevant Cases",
+            type="primary",
+            disabled=not is_configured,
+        )
 
-if question:
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
+    if submitted and is_configured:
+        question = _build_guided_question(
+            case_type=case_type,
+            keyword=keyword,
+            business_area=business_area,
+            situation=situation,
+            known_regulation=known_regulation,
+            focus=focus,
+        )
+        with st.spinner("Searching indexed knowledge and building a case card..."):
+            try:
+                answer, chunks = _run_company_brain(question, expert_choice, top_k)
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                _render_result(answer, chunks, show_chunks)
 
-    selected_expert = expert_for_ui_choice(expert_choice)
-    with st.chat_message("assistant"):
-        with st.spinner("Searching indexed knowledge and grounding an answer..."):
-            chunks = _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
-            generated = _answer_generator().generate(question, chunks, selected_expert)
+with direct_tab:
+    st.subheader("Ask Directly")
+    st.write("Use this when you already know the exact question you want to ask.")
 
-        response = _format_answer(generated.answer, generated.sources, generated.confidence)
-        st.markdown(response)
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-        if generated.decision_trail:
-            st.markdown("### Decision Trail")
-            st.markdown(generated.decision_trail)
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        if show_chunks:
-            st.markdown("### Retrieved Evidence")
-            for chunk in chunks:
-                with st.expander(
-                    f"{chunk.file_name or chunk.source} · similarity {chunk.similarity:.3f}"
-                ):
-                    st.write(chunk.content)
-                    st.json(
-                        {
-                            "expert": chunk.expert,
-                            "topic": chunk.topic,
-                            "chunk_index": chunk.chunk_index,
-                            "metadata": chunk.metadata,
-                        }
+    question = st.chat_input(
+        "Ask about decisions, regulations, risks, or old cases",
+        disabled=not is_configured,
+    )
+
+    if question and is_configured:
+        st.session_state.messages.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Searching indexed knowledge and grounding an answer..."):
+                try:
+                    answer, chunks = _run_company_brain(question, expert_choice, top_k)
+                except RuntimeError as exc:
+                    st.error(str(exc))
+                else:
+                    response = _format_answer(answer)
+                    st.markdown(response)
+
+                    if answer.decision_trail:
+                        st.markdown("### Decision Trail")
+                        st.markdown(answer.decision_trail)
+
+                    if show_chunks:
+                        _render_evidence(chunks)
+
+                    full_response = response
+                    if answer.decision_trail:
+                        full_response += f"\n\n### Decision Trail\n{answer.decision_trail}"
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": full_response}
                     )
-
-        full_response = response
-        if generated.decision_trail:
-            full_response += f"\n\n### Decision Trail\n{generated.decision_trail}"
-        st.session_state.messages.append({"role": "assistant", "content": full_response})

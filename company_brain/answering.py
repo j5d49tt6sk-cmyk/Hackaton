@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Optional
 
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
@@ -17,7 +18,7 @@ class _AnswerPayload(BaseModel):
     answer: str
     sources: list[str] = Field(default_factory=list)
     confidence: str
-    decision_trail: str | None = None
+    decision_trail: Optional[str] = None
 
 
 class AnswerGenerator:
@@ -87,11 +88,15 @@ def _system_prompt() -> str:
         "Answer only from the retrieved_context provided by the user. Never invent "
         "facts, numbers, decisions, or sources. If the answer is missing from the "
         "context, say that the indexed documents do not contain enough information. "
-        "Cite file names in the sources list. Use confidence High only when several "
-        "strong chunks directly answer the question, Medium when evidence is partial "
-        "but useful, and Low when evidence is weak or missing. If the context contains "
-        "decisions, alternatives, reasoning, or outcomes, include a decision_trail "
-        "field with the sections Problem, Alternatives Evaluated, Decision Taken, "
+        "The user is often looking for historical cases where former employees solved "
+        "similar problems. When evidence is available, structure the answer as a case "
+        "card with these Markdown sections: Problem, Decision, Reasoning, Regulatory "
+        "Requirement, Risks, and Similar Cases or Evidence. Cite file names in the "
+        "sources list. Use confidence High only when several strong chunks directly "
+        "answer the question, Medium when evidence is partial but useful, and Low "
+        "when evidence is weak or missing. If the context contains decisions, "
+        "alternatives, reasoning, or outcomes, include a decision_trail field with "
+        "the sections Problem, Decision, Reasoning, Regulatory Requirement, Risks, "
         "and Outcome. Return strict JSON with keys answer, sources, confidence, "
         "decision_trail."
     )
@@ -123,4 +128,3 @@ def _unique_sources(chunks: list[RetrievedChunk]) -> list[str]:
 def _normalize_confidence(value: str) -> str:
     normalized = value.strip().title()
     return normalized if normalized in {"High", "Medium", "Low"} else "Low"
-

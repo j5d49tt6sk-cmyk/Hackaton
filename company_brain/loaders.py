@@ -4,11 +4,12 @@ import csv
 import logging
 from pathlib import Path
 
+from docx import Document
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
 
-SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".txt", ".md", ".csv"}
+SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".txt", ".md", ".csv", ".docx"}
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def extract_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="ignore")
     if suffix == ".csv":
         return _read_csv(path)
+    if suffix == ".docx":
+        return _read_docx(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")
 
 
@@ -79,3 +82,8 @@ def _read_csv(path: Path) -> str:
                 lines.append(" | ".join(values))
     return "\n".join(lines)
 
+
+def _read_docx(path: Path) -> str:
+    document = Document(path)
+    paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
+    return "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
