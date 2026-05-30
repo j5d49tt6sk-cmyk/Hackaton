@@ -126,9 +126,13 @@ class IngestionPipeline:
                 document_id=document_id,
                 raw_text=raw_text,
                 cleaned_text=cleaned_text,
+                access_level=document_access_level,
+                access_tag=document_access_tag,
                 metadata={
                     "section_count": len(sections),
                     "extractor": file_path.suffix.lower().lstrip("."),
+                    "access_level": document_access_level,
+                    "access_tag": document_access_tag,
                 },
             )
 
@@ -141,7 +145,12 @@ class IngestionPipeline:
                 chunk_size=self._settings.chunk_size,
                 overlap=self._settings.chunk_overlap,
             )
-            inserted = self._insert_in_batches(chunks, batch_size)
+            inserted = self._insert_in_batches(
+                chunks,
+                batch_size,
+                access_level=document_access_level,
+                access_tag=document_access_tag,
+            )
             self._document_store.update_document(
                 document_id,
                 {
@@ -163,7 +172,13 @@ class IngestionPipeline:
             )
             raise
 
-    def _insert_in_batches(self, chunks: list[DocumentChunk], batch_size: int) -> int:
+    def _insert_in_batches(
+        self,
+        chunks: list[DocumentChunk],
+        batch_size: int,
+        access_level: int,
+        access_tag: str,
+    ) -> int:
         inserted = 0
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
@@ -173,7 +188,12 @@ class IngestionPipeline:
                 )
             else:
                 embeddings = [None] * len(batch)
-            inserted += self._document_store.insert_chunks(batch, embeddings)
+            inserted += self._document_store.insert_chunks(
+                batch,
+                embeddings,
+                access_level=access_level,
+                access_tag=access_tag,
+            )
         return inserted
 
 

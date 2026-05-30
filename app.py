@@ -293,11 +293,13 @@ def _render_login_gate() -> None:
         st.rerun()
 
 
+def _requester_user_id() -> str | None:
+    user_id = st.session_state.get("employee_user_id")
+    return str(user_id) if user_id else None
+
+
 def _requester_access_level() -> int:
-    return int(st.session_state.get("employee_access_level") or PUBLIC_FALLBACK_ACCESS)
-
-
-PUBLIC_FALLBACK_ACCESS = 1
+    return _current_employee().access_level
 
 
 def _render_employee_badge() -> None:
@@ -456,7 +458,7 @@ def _retrieve_company_brain(
         question,
         expert=selected_expert,
         top_k=top_k,
-        requester_access_level=_requester_access_level(),
+        requester_user_id=_requester_user_id(),
     )
 
 

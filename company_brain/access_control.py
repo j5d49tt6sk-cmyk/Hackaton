@@ -17,6 +17,10 @@ ACCESS_LABELS = {
     EMAIL_RESTRICTED_ACCESS: "Email Restricted",
 }
 
+ACCESS_TAGS = {
+    level: f"L{level} {label}" for level, label in ACCESS_LABELS.items()
+}
+
 
 @dataclass(frozen=True)
 class EmployeeAccount:
@@ -70,12 +74,16 @@ def access_label(access_level: int) -> str:
     return ACCESS_LABELS.get(access_level, f"Level {access_level}")
 
 
+def access_tag(access_level: int) -> str:
+    return ACCESS_TAGS.get(access_level, f"L{access_level} {access_label(access_level)}")
+
+
 def access_options() -> list[tuple[str, int]]:
     return [
-        (ACCESS_LABELS[PUBLIC_ACCESS], PUBLIC_ACCESS),
-        (ACCESS_LABELS[INTERNAL_ACCESS], INTERNAL_ACCESS),
-        (ACCESS_LABELS[CONFIDENTIAL_ACCESS], CONFIDENTIAL_ACCESS),
-        (ACCESS_LABELS[EMAIL_RESTRICTED_ACCESS], EMAIL_RESTRICTED_ACCESS),
+        (access_tag(PUBLIC_ACCESS), PUBLIC_ACCESS),
+        (access_tag(INTERNAL_ACCESS), INTERNAL_ACCESS),
+        (access_tag(CONFIDENTIAL_ACCESS), CONFIDENTIAL_ACCESS),
+        (access_tag(EMAIL_RESTRICTED_ACCESS), EMAIL_RESTRICTED_ACCESS),
     ]
 
 
@@ -84,12 +92,12 @@ def infer_document_access(path: Path) -> tuple[int, str]:
     if path.suffix.lower() in {".eml", ".msg"} or any(
         token in haystack for token in ("email", "e-mail", "mailbox")
     ):
-        return EMAIL_RESTRICTED_ACCESS, ACCESS_LABELS[EMAIL_RESTRICTED_ACCESS]
+        return EMAIL_RESTRICTED_ACCESS, access_tag(EMAIL_RESTRICTED_ACCESS)
     if "confidential" in haystack:
-        return CONFIDENTIAL_ACCESS, ACCESS_LABELS[CONFIDENTIAL_ACCESS]
+        return CONFIDENTIAL_ACCESS, access_tag(CONFIDENTIAL_ACCESS)
     if any(token in haystack for token in ("transcript", "internal", "master data")):
-        return INTERNAL_ACCESS, ACCESS_LABELS[INTERNAL_ACCESS]
-    return PUBLIC_ACCESS, ACCESS_LABELS[PUBLIC_ACCESS]
+        return INTERNAL_ACCESS, access_tag(INTERNAL_ACCESS)
+    return PUBLIC_ACCESS, access_tag(PUBLIC_ACCESS)
 
 
 def employee_from_row(row: dict[str, object]) -> EmployeeAccount:

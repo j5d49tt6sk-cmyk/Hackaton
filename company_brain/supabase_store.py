@@ -100,19 +100,27 @@ class SupabaseDocumentStore:
         document_id: int,
         raw_text: str,
         cleaned_text: str,
+        access_level: int,
+        access_tag: str,
         metadata: dict[str, Any] | None = None,
     ) -> int:
         row = {
             "document_id": document_id,
             "raw_text": raw_text,
             "cleaned_text": cleaned_text,
+            "access_level": access_level,
+            "access_tag": access_tag,
             "metadata": metadata or {},
         }
         result = self._client.table("document_texts").insert(row).execute()
         return int(result.data[0]["id"])
 
     def insert_chunks(
-        self, chunks: list[DocumentChunk], embeddings: list[list[float] | None]
+        self,
+        chunks: list[DocumentChunk],
+        embeddings: list[list[float] | None],
+        access_level: int,
+        access_tag: str,
     ) -> int:
         rows = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
@@ -128,7 +136,13 @@ class SupabaseDocumentStore:
                     "heading": chunk.heading,
                     "expert": chunk.expert,
                     "topic": chunk.topic,
-                    "metadata": chunk.metadata,
+                    "access_level": access_level,
+                    "access_tag": access_tag,
+                    "metadata": {
+                        **chunk.metadata,
+                        "access_level": access_level,
+                        "access_tag": access_tag,
+                    },
                 }
             )
 
@@ -146,16 +160,24 @@ class SupabaseDocumentStore:
         top_k: int,
         expert: str | None = None,
         similarity_threshold: float = 0.0,
-        requester_access_level: int = 1,
+        requester_user_id: str | None = None,
     ) -> list[RetrievedChunk]:
+        if not requester_user_id:
+            logger.info("[AI Search] authenticated user: no")
+            return []
         params: dict[str, Any] = {
             "query_embedding": query_embedding,
             "match_count": top_k,
             "match_expert": expert,
             "similarity_threshold": similarity_threshold,
-            "requester_access_level": requester_access_level,
+            "requester_user_id": requester_user_id,
         }
         result = self._client.rpc("match_documents", params).execute()
+        logger.info("[AI Search] authenticated user: yes user_id=%s", requester_user_id)
+        logger.info(
+            "[AI Search] chunks returned after DB access filter: %s",
+            len(result.data or []),
+        )
         return [_to_retrieved_chunk(row) for row in result.data or []]
 
     def keyword_search_documents(
@@ -163,17 +185,27 @@ class SupabaseDocumentStore:
         query: str,
         top_k: int,
         expert: str | None = None,
-        requester_access_level: int = 1,
+        requester_user_id: str | None = None,
         scan_limit: int = 1000,
     ) -> list[RetrievedChunk]:
+        if not requester_user_id:
+            logger.info("[AI Search] authenticated user: no")
+            return []
+        requester_access_level = self._requester_access_level(requester_user_id)
+        logger.info("[AI Search] authenticated user: yes user_id=%s", requester_user_id)
+        if requester_access_level <= 0:
+            logger.info("[AI Search] chunks returned after DB access filter: 0")
+            return []
         tokens = _query_tokens(query)
         request = (
             self._client.table("document_chunks")
             .select(
                 "id, document_id, content, chunk_index, page_number, sheet_name, "
-                "heading, expert, topic, metadata, "
+                "heading, expert, topic, access_level, access_tag, metadata, "
                 "documents(file_name, source, access_level, access_tag)"
             )
+            .lt("access_level", 99)
+            .lte("access_level", requester_access_level)
             .limit(scan_limit)
         )
         if expert:
@@ -182,22 +214,48 @@ class SupabaseDocumentStore:
 
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in result.data or []:
-            document = row.get("documents") or {}
-            document_access_level = int(document.get("access_level") or 1)
-            if (
-                document_access_level >= 99
-                or document_access_level > requester_access_level
-            ):
-                continue
             score = _keyword_score(row.get("content") or "", tokens)
             if score > 0:
                 scored.append((score, row))
 
         scored.sort(key=lambda item: item[0], reverse=True)
+        logger.info(
+            "[AI Search] chunks returned after DB access filter: %s",
+            len(scored[:top_k]),
+        )
         return [
             _to_retrieved_chunk(_keyword_row_to_retrieved(row, score))
             for score, row in scored[:top_k]
         ]
+
+    def _requester_access_level(self, requester_user_id: str) -> int:
+        try:
+            result = (
+                self._client.table("profiles")
+                .select("access_level")
+                .eq("user_id", requester_user_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return int(result.data[0]["access_level"])
+        except Exception:
+            logger.debug(
+                "Could not load requester access_level from profiles",
+                exc_info=True,
+            )
+
+        result = (
+            self._client.table("employee_accounts")
+            .select("access_level")
+            .eq("user_id", requester_user_id)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return 0
+        return int(result.data[0]["access_level"])
 
     def insert_chat_message(
         self,
@@ -287,8 +345,8 @@ def _keyword_score(content: str, tokens: list[str]) -> float:
 
 def _keyword_row_to_retrieved(row: dict[str, Any], score: float) -> dict[str, Any]:
     document = row.get("documents") or {}
-    access_level = int(document.get("access_level") or 1)
-    access_tag = document.get("access_tag") or "Public"
+    access_level = int(row.get("access_level") or document.get("access_level") or 1)
+    access_tag = row.get("access_tag") or document.get("access_tag") or "L1 Public"
     return {
         "id": row["id"],
         "document_id": row.get("document_id"),
