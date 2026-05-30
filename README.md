@@ -77,10 +77,15 @@ Run:
 .venv/bin/python ingest.py SIX_Hack_Zurich
 ```
 
+By default, ingestion replaces an existing document with the same file name and
+file size before inserting fresh text, chunks, and embeddings. This keeps the
+vector index clean during repeated hackathon runs. To intentionally keep older
+copies, pass `--no-replace`.
+
 Supported source types:
 
 - PDF: stores page numbers in chunk metadata
-- DOCX: stores headings where available
+- DOCX: stores headings and table context where available
 - XLSX: stores sheet names in chunk metadata
 
 ## Streamlit App

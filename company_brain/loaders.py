@@ -112,4 +112,37 @@ def _read_docx(path: Path) -> list[ExtractedSection]:
             current_paragraphs.append(text)
 
     flush()
+    sections.extend(_extract_docx_tables(document))
     return sections
+
+
+def _extract_docx_tables(document: Document) -> list[ExtractedSection]:
+    sections: list[ExtractedSection] = []
+    for table_index, table in enumerate(document.tables):
+        rows: list[str] = []
+        for row in table.rows:
+            values: list[str] = []
+            for cell in row.cells:
+                value = _normalize_cell_text(cell.text)
+                if value:
+                    values.append(value)
+            if values:
+                rows.append(" | ".join(values))
+        if rows:
+            heading = f"Table {table_index + 1}"
+            sections.append(
+                ExtractedSection(
+                    content="\n".join(rows),
+                    heading=heading,
+                    metadata={
+                        "source_type": "docx_table",
+                        "table_index": table_index,
+                        "row_count": len(rows),
+                    },
+                )
+            )
+    return sections
+
+
+def _normalize_cell_text(text: str) -> str:
+    return " ".join(part.strip() for part in text.splitlines() if part.strip())

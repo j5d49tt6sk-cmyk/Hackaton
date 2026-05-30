@@ -16,6 +16,11 @@ def main() -> None:
     parser.add_argument("--expert", help="Override expert label for all ingested chunks")
     parser.add_argument("--topic", help="Override topic label for all ingested chunks")
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument(
+        "--no-replace",
+        action="store_true",
+        help="Keep existing matching documents instead of replacing them",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -31,6 +36,7 @@ def main() -> None:
         expert=args.expert,
         topic=args.topic,
         batch_size=args.batch_size,
+        replace_existing=not args.no_replace,
     )
     print(f"Inserted {inserted} chunks.")
 

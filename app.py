@@ -262,6 +262,7 @@ def _ingest_uploaded_file(uploaded_file, expert_choice: str) -> int:
             temp_path,
             expert=selected_expert,
             topic=Path(uploaded_file.name).stem,
+            replace_existing=True,
         )
 
 

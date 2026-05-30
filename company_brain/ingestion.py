@@ -39,6 +39,7 @@ class IngestionPipeline:
         expert: str | None = None,
         topic: str | None = None,
         batch_size: int = 64,
+        replace_existing: bool = True,
     ) -> int:
         files = iter_supported_files(root)
         logger.info("Found %s supported files under %s", len(files), root)
@@ -51,6 +52,7 @@ class IngestionPipeline:
                     expert=expert,
                     topic=topic,
                     batch_size=batch_size,
+                    replace_existing=replace_existing,
                 )
             except Exception:
                 logger.exception("Failed to ingest %s", file_path)
@@ -64,14 +66,27 @@ class IngestionPipeline:
         expert: str | None = None,
         topic: str | None = None,
         batch_size: int = 64,
+        replace_existing: bool = True,
     ) -> int:
         inferred_expert = infer_expert(file_path, expert)
         inferred_topic = infer_topic(file_path, topic)
+        if replace_existing:
+            existing_document_id = self._document_store.find_existing_document_id(
+                file_path
+            )
+            if existing_document_id is not None:
+                logger.info(
+                    "Replacing existing document %s for %s",
+                    existing_document_id,
+                    file_path.name,
+                )
+                self._document_store.delete_document(existing_document_id)
+
         document_id = self._document_store.create_document(
             file_path,
             expert=inferred_expert,
             topic=inferred_topic,
-            metadata={"extension": file_path.suffix.lower()},
+            metadata=_document_metadata(file_path),
         )
 
         try:
@@ -116,7 +131,7 @@ class IngestionPipeline:
                 {
                     "status": "indexed",
                     "metadata": {
-                        "extension": file_path.suffix.lower(),
+                        **_document_metadata(file_path),
                         "section_count": len(sections),
                         "chunk_count": inserted,
                     },
@@ -155,3 +170,11 @@ def _join_sections(sections: list[ExtractedSection], clean: bool) -> str:
         content = normalize_text(section.content) if clean else section.content
         parts.append(f"[{prefix}]\n{content}" if prefix else content)
     return "\n\n".join(part for part in parts if part.strip())
+
+
+def _document_metadata(file_path: Path) -> dict[str, object]:
+    return {
+        "extension": file_path.suffix.lower(),
+        "source_name": file_path.name,
+        "source_path": str(file_path),
+    }

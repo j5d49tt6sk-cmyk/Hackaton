@@ -29,6 +29,36 @@ class SupabaseDocumentStore:
             )
         return storage_path
 
+    def find_existing_document_id(self, path: Path) -> int | None:
+        result = (
+            self._client.table("documents")
+            .select("id")
+            .eq("file_name", path.name)
+            .eq("file_size", path.stat().st_size)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        return int(result.data[0]["id"])
+
+    def delete_document(self, document_id: int) -> None:
+        result = (
+            self._client.table("documents")
+            .select("storage_path")
+            .eq("id", document_id)
+            .limit(1)
+            .execute()
+        )
+        storage_path = result.data[0].get("storage_path") if result.data else None
+        self._client.table("documents").delete().eq("id", document_id).execute()
+        if storage_path:
+            try:
+                self._client.storage.from_(self._bucket).remove([storage_path])
+            except Exception:
+                logger.warning("Could not remove stale storage object %s", storage_path)
+
     def create_document(
         self,
         path: Path,
