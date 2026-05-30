@@ -29,6 +29,7 @@ class Retriever:
         self._document_store = document_store or SupabaseDocumentStore(
             settings.supabase_url,
             settings.supabase_service_role_key,
+            settings.supabase_storage_bucket,
         )
 
     def retrieve(
@@ -48,4 +49,3 @@ class Retriever:
 
 def expert_for_ui_choice(choice: str) -> str | None:
     return EXPERT_OPTIONS.get(choice)
-

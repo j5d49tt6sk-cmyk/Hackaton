@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from company_brain.chunking import split_text
+from company_brain.chunking import chunk_sections, normalize_text
 from company_brain.config import Settings
 from company_brain.embeddings import EmbeddingClient
-from company_brain.loaders import extract_text, iter_supported_files
+from company_brain.loaders import extract_sections, iter_supported_files
 from company_brain.metadata import infer_expert, infer_topic
-from company_brain.models import DocumentChunk
+from company_brain.models import DocumentChunk, ExtractedSection
 from company_brain.supabase_store import SupabaseDocumentStore
 
 
@@ -30,6 +30,7 @@ class IngestionPipeline:
         self._document_store = document_store or SupabaseDocumentStore(
             settings.supabase_url,
             settings.supabase_service_role_key,
+            settings.supabase_storage_bucket,
         )
 
     def ingest_path(
@@ -45,44 +46,89 @@ class IngestionPipeline:
 
         for file_path in files:
             try:
-                chunks = self._load_file_chunks(file_path, expert, topic)
-                if not chunks:
-                    logger.info("No text extracted from %s", file_path)
-                    continue
-                total_inserted += self._insert_in_batches(chunks, batch_size)
+                total_inserted += self.ingest_file(
+                    file_path,
+                    expert=expert,
+                    topic=topic,
+                    batch_size=batch_size,
+                )
             except Exception:
                 logger.exception("Failed to ingest %s", file_path)
 
         logger.info("Finished ingestion. Inserted %s chunks.", total_inserted)
         return total_inserted
 
-    def _load_file_chunks(
-        self, file_path: Path, expert: str | None, topic: str | None
-    ) -> list[DocumentChunk]:
-        text = extract_text(file_path)
-        parts = split_text(
-            text,
-            chunk_size=self._settings.chunk_size,
-            overlap=self._settings.chunk_overlap,
-        )
+    def ingest_file(
+        self,
+        file_path: Path,
+        expert: str | None = None,
+        topic: str | None = None,
+        batch_size: int = 64,
+    ) -> int:
         inferred_expert = infer_expert(file_path, expert)
         inferred_topic = infer_topic(file_path, topic)
-        return [
-            DocumentChunk(
-                content=content,
-                source=str(file_path),
-                file_name=file_path.name,
-                expert=inferred_expert,
-                topic=inferred_topic,
-                chunk_index=index,
+        document_id = self._document_store.create_document(
+            file_path,
+            expert=inferred_expert,
+            topic=inferred_topic,
+            metadata={"extension": file_path.suffix.lower()},
+        )
+
+        try:
+            storage_path = self._document_store.upload_file(file_path, document_id)
+            self._document_store.update_document(
+                document_id,
+                {"storage_path": storage_path, "status": "uploaded"},
+            )
+
+            sections = extract_sections(file_path)
+            raw_text = _join_sections(sections, clean=False)
+            cleaned_text = _join_sections(sections, clean=True)
+            if not cleaned_text:
+                self._document_store.update_document(
+                    document_id,
+                    {"status": "empty", "error_message": "No extractable text found"},
+                )
+                return 0
+
+            document_text_id = self._document_store.insert_document_text(
+                document_id=document_id,
+                raw_text=raw_text,
+                cleaned_text=cleaned_text,
                 metadata={
-                    "extension": file_path.suffix.lower(),
-                    "relative_parent": file_path.parent.name,
-                    "character_count": len(content),
+                    "section_count": len(sections),
+                    "extractor": file_path.suffix.lower().lstrip("."),
                 },
             )
-            for index, content in enumerate(parts)
-        ]
+
+            chunks = chunk_sections(
+                sections=sections,
+                document_id=document_id,
+                document_text_id=document_text_id,
+                expert=inferred_expert,
+                topic=inferred_topic,
+                chunk_size=self._settings.chunk_size,
+                overlap=self._settings.chunk_overlap,
+            )
+            inserted = self._insert_in_batches(chunks, batch_size)
+            self._document_store.update_document(
+                document_id,
+                {
+                    "status": "indexed",
+                    "metadata": {
+                        "extension": file_path.suffix.lower(),
+                        "section_count": len(sections),
+                        "chunk_count": inserted,
+                    },
+                },
+            )
+            return inserted
+        except Exception as exc:
+            self._document_store.update_document(
+                document_id,
+                {"status": "failed", "error_message": str(exc)},
+            )
+            raise
 
     def _insert_in_batches(self, chunks: list[DocumentChunk], batch_size: int) -> int:
         inserted = 0
@@ -94,3 +140,18 @@ class IngestionPipeline:
             inserted += self._document_store.insert_chunks(batch, embeddings)
         return inserted
 
+
+def _join_sections(sections: list[ExtractedSection], clean: bool) -> str:
+    parts: list[str] = []
+    for section in sections:
+        prefix_parts = []
+        if section.page_number:
+            prefix_parts.append(f"Page {section.page_number}")
+        if section.sheet_name:
+            prefix_parts.append(f"Sheet: {section.sheet_name}")
+        if section.heading:
+            prefix_parts.append(f"Heading: {section.heading}")
+        prefix = " | ".join(prefix_parts)
+        content = normalize_text(section.content) if clean else section.content
+        parts.append(f"[{prefix}]\n{content}" if prefix else content)
+    return "\n\n".join(part for part in parts if part.strip())

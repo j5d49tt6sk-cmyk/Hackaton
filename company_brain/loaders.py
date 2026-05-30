@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import logging
 from pathlib import Path
 
@@ -8,8 +7,10 @@ from docx import Document
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
+from company_brain.models import ExtractedSection
 
-SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".txt", ".md", ".csv", ".docx"}
+
+SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".docx"}
 
 logger = logging.getLogger(__name__)
 
@@ -26,37 +27,43 @@ def iter_supported_files(root: Path) -> list[Path]:
     )
 
 
-def extract_text(path: Path) -> str:
+def extract_sections(path: Path) -> list[ExtractedSection]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return _read_pdf(path)
     if suffix == ".xlsx":
         return _read_xlsx(path)
-    if suffix in {".txt", ".md"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    if suffix == ".csv":
-        return _read_csv(path)
     if suffix == ".docx":
         return _read_docx(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")
 
 
-def _read_pdf(path: Path) -> str:
+def extract_text(path: Path) -> str:
+    return "\n\n".join(section.content for section in extract_sections(path))
+
+
+def _read_pdf(path: Path) -> list[ExtractedSection]:
     reader = PdfReader(str(path))
-    pages: list[str] = []
+    sections: list[ExtractedSection] = []
     for index, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
             if text.strip():
-                pages.append(f"[Page {index}]\n{text}")
+                sections.append(
+                    ExtractedSection(
+                        content=text.strip(),
+                        page_number=index,
+                        metadata={"source_type": "pdf_page"},
+                    )
+                )
         except Exception as exc:  # pragma: no cover - defensive against malformed PDFs
             logger.warning("Failed to extract page %s from %s: %s", index, path, exc)
-    return "\n\n".join(pages)
+    return sections
 
 
-def _read_xlsx(path: Path) -> str:
+def _read_xlsx(path: Path) -> list[ExtractedSection]:
     workbook = load_workbook(path, read_only=True, data_only=True)
-    sections: list[str] = []
+    sections: list[ExtractedSection] = []
     for sheet in workbook.worksheets:
         rows: list[str] = []
         for row in sheet.iter_rows(values_only=True):
@@ -64,26 +71,45 @@ def _read_xlsx(path: Path) -> str:
             if values:
                 rows.append(" | ".join(values))
         if rows:
-            sections.append(f"[Sheet: {sheet.title}]\n" + "\n".join(rows))
+            sections.append(
+                ExtractedSection(
+                    content="\n".join(rows),
+                    sheet_name=sheet.title,
+                    heading=sheet.title,
+                    metadata={"source_type": "xlsx_sheet", "row_count": len(rows)},
+                )
+            )
     workbook.close()
-    return "\n\n".join(sections)
+    return sections
 
 
-def _read_csv(path: Path) -> str:
-    lines: list[str] = []
-    with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
-        sample = handle.read(4096)
-        handle.seek(0)
-        dialect = csv.Sniffer().sniff(sample) if sample else csv.excel
-        reader = csv.reader(handle, dialect)
-        for row in reader:
-            values = [value.strip() for value in row if value.strip()]
-            if values:
-                lines.append(" | ".join(values))
-    return "\n".join(lines)
-
-
-def _read_docx(path: Path) -> str:
+def _read_docx(path: Path) -> list[ExtractedSection]:
     document = Document(path)
-    paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
-    return "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
+    sections: list[ExtractedSection] = []
+    current_heading: str | None = None
+    current_paragraphs: list[str] = []
+
+    def flush() -> None:
+        if current_paragraphs:
+            sections.append(
+                ExtractedSection(
+                    content="\n\n".join(current_paragraphs),
+                    heading=current_heading,
+                    metadata={"source_type": "docx_section"},
+                )
+            )
+
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        style_name = paragraph.style.name.lower() if paragraph.style else ""
+        if style_name.startswith("heading"):
+            flush()
+            current_heading = text
+            current_paragraphs = [text]
+        else:
+            current_paragraphs.append(text)
+
+    flush()
+    return sections

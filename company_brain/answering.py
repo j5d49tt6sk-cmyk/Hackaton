@@ -111,6 +111,9 @@ def _chunk_to_context(chunk: RetrievedChunk) -> dict[str, object]:
         "expert": chunk.expert,
         "topic": chunk.topic,
         "chunk_index": chunk.chunk_index,
+        "page_number": chunk.page_number,
+        "sheet_name": chunk.sheet_name,
+        "heading": chunk.heading,
         "similarity": round(chunk.similarity, 4),
         "metadata": chunk.metadata,
     }

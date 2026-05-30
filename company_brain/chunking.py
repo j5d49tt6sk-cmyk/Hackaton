@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from company_brain.models import DocumentChunk, ExtractedSection
+
 
 def split_text(text: str, chunk_size: int = 1200, overlap: int = 180) -> list[str]:
     clean = normalize_text(text)
@@ -43,6 +45,46 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+def chunk_sections(
+    sections: list[ExtractedSection],
+    document_id: int,
+    document_text_id: int | None,
+    expert: str | None,
+    topic: str | None,
+    chunk_size: int = 1200,
+    overlap: int = 180,
+) -> list[DocumentChunk]:
+    chunks: list[DocumentChunk] = []
+    for section_index, section in enumerate(sections):
+        heading_prefix = f"{section.heading}\n\n" if section.heading else ""
+        section_chunks = split_text(
+            f"{heading_prefix}{section.content}",
+            chunk_size=chunk_size,
+            overlap=overlap,
+        )
+        for section_chunk_index, content in enumerate(section_chunks):
+            chunks.append(
+                DocumentChunk(
+                    content=content,
+                    document_id=document_id,
+                    document_text_id=document_text_id,
+                    chunk_index=len(chunks),
+                    expert=expert,
+                    topic=topic,
+                    page_number=section.page_number,
+                    sheet_name=section.sheet_name,
+                    heading=section.heading,
+                    metadata={
+                        **section.metadata,
+                        "section_index": section_index,
+                        "section_chunk_index": section_chunk_index,
+                        "character_count": len(content),
+                    },
+                )
+            )
+    return chunks
+
+
 def _split_long_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     chunks: list[str] = []
     start = 0
@@ -65,4 +107,3 @@ def _add_overlap(chunks: list[str], overlap: int, chunk_size: int) -> list[str]:
         candidate = f"{prefix}\n\n{chunks[index]}".strip()
         merged.append(candidate[-chunk_size:])
     return merged
-

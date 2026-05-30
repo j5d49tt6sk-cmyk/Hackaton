@@ -8,6 +8,8 @@ Thumbs.db
 
 # Python
 __pycache__/
+pycache/
+*.pyc
 *.py[cod]
 .venv/
 venv/

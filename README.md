@@ -1,61 +1,47 @@
 # Company Brain
 
-Company Brain is an AI-powered knowledge platform for preserving organizational
-intelligence, expert knowledge, decision history, and institutional memory.
+Company Brain is a Streamlit RAG application for preserving institutional
+knowledge from SIX regulatory documents and internal transcripts.
 
-It is designed for a SIX hackathon demo and focuses on evidence-based answers,
-source traceability, onboarding acceleration, and Expert Twins for specific
-knowledge domains.
-
-## Architecture
+## Current Architecture
 
 ```text
+File upload or batch ingestion
+-> Supabase Storage bucket: rag-documents
+-> documents: file metadata and storage path
+-> document_texts: raw and cleaned extracted text
+-> document_chunks: chunk text, metadata, and pgvector embeddings
+-> match_documents RPC: semantic search over document_chunks
+-> OpenAI answer generation
+-> chat_messages: conversation history and cited chunks
+```
+
+## Repository Structure
+
+```text
+SIX_Hack_Zurich/                  Local hackathon source documents
+app.py                            Streamlit app
+ingest.py                         Batch ingestion CLI
 company_brain/
-  answering.py        Grounded answer generation with sources and confidence
-  chunking.py         Text normalization and chunk splitting
-  config.py           Environment variable settings
-  embeddings.py       OpenAI embedding client
-  ingestion.py        Recursive ingestion pipeline
-  loaders.py          PDF, XLSX, DOCX, TXT, MD, and CSV readers
-  metadata.py         Expert/topic inference from file paths
-  models.py           Typed data models
-  retrieval.py        Vector retrieval and Expert Twin filtering
-  supabase_store.py   Supabase insert and match RPC wrapper
-
-ingest.py             CLI for indexing documents
-app.py                Streamlit chat UI
-sql/match_documents.sql
-                      Supabase pgvector RPC and indexes
+  answering.py                    Grounded answer generation
+  chunking.py                     Section-aware chunking
+  config.py                       Environment settings
+  embeddings.py                   OpenAI embeddings
+  ingestion.py                    Storage-first ingestion pipeline
+  loaders.py                      PDF, DOCX, XLSX extraction
+  metadata.py                     Expert/topic inference
+  models.py                       Shared data models
+  retrieval.py                    Semantic retrieval
+  supabase_store.py               Supabase tables, RPC, Storage, chat messages
+sql/match_documents.sql           RPC for vector search
+supabase/migrations/001_initial_schema.sql
+                                  Canonical Supabase schema
 ```
 
-## Supabase Setup
-
-Create the `documents` table:
-
-```sql
-create table documents (
-  id bigserial primary key,
-  content text not null,
-  source text,
-  file_name text,
-  expert text,
-  topic text,
-  chunk_index int,
-  metadata jsonb,
-  embedding vector(1536)
-);
-```
-
-Then run `sql/match_documents.sql` in the Supabase SQL editor. It creates:
-
-- `match_documents(...)` RPC for vector similarity search
-- HNSW cosine index on `embedding`
-- B-tree index on `expert`
-
-## Local Setup
+## Setup
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -67,75 +53,51 @@ Fill in `.env`:
 OPENAI_API_KEY=...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_STORAGE_BUCKET=rag-documents
 COMPANY_BRAIN_PASSWORD=realesthacks
 ```
 
-Use the Supabase service role key only on the backend or local demo machine.
-Do not expose it in a public frontend.
+Create a Supabase Storage bucket named `rag-documents`.
 
-## Ingest Documents
+Run the SQL in `supabase/migrations/001_initial_schema.sql` in Supabase. If the
+tables already exist, compare the migration with the deployed schema and apply
+the missing columns, indexes, and RPC.
 
-The pipeline recursively scans a file or folder and supports:
+## Batch Ingestion
 
-- PDF
-- XLSX
-- DOCX
-- TXT
-- MD
-- CSV
+The local SIX documents are in:
 
 ```bash
-python ingest.py ./data
+SIX_Hack_Zurich
 ```
 
-Optional overrides:
+Run:
 
 ```bash
-python ingest.py ./data/compliance --expert "Compliance Expert" --topic "MiFID"
-python ingest.py ./data/esg --expert "ESG Expert"
-python ingest.py ./data/transcripts --expert "Internal Expert"
+.venv/bin/python ingest.py SIX_Hack_Zurich
 ```
 
-Without overrides, the pipeline infers Expert Twins from file and folder names:
+Supported source types:
 
-- Compliance Expert: MiFID, FATCA, SFDR, compliance, regulatory
-- ESG Expert: ESG, sustainability, taxonomy, climate
-- Internal Expert: meeting, transcript, minutes, internal, discussion
+- PDF: stores page numbers in chunk metadata
+- DOCX: stores headings where available
+- XLSX: stores sheet names in chunk metadata
 
-## Run the Demo UI
+## Streamlit App
+
+Run:
 
 ```bash
-python3 app.py
+.venv/bin/python app.py
 ```
 
-In VS Code, open `app.py` and press Run. If dependencies are missing, install
-them once with:
+The app supports:
 
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-The app opens on the first free port starting at `8501`. Use the terminal output
-URL, usually `http://localhost:8501`. The demo password is `realesthacks`.
-
-The UI supports:
-
-- Guided case questionnaire
-- Direct questions
+- password-gated hackathon demo access
+- guided case finder
+- direct question answering
 - Expert Twin filtering
-- Retrieved evidence inspection
-- Source citations
-- Confidence labels
-- Decision Trail generation when the retrieved context contains decisions,
-  alternatives, reasoning, or outcomes
-
-## Retrieval Flow
-
-1. Embed the user question with `text-embedding-3-small`
-2. Call Supabase RPC `match_documents`
-3. Optionally filter by `expert`
-4. Return chunks with similarity scores
-5. Generate an answer using only retrieved chunks
-
-If the retrieved documents do not contain enough information, the model is
-instructed to say so instead of inventing an answer.
+- document upload to Supabase Storage
+- indexing uploaded PDF/DOCX/XLSX files
+- persisted chat messages in Supabase
+- evidence display with file, page, sheet, and heading metadata

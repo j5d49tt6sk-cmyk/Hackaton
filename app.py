@@ -6,6 +6,9 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
+import uuid
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
@@ -59,8 +62,10 @@ import streamlit as st
 
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
+from company_brain.ingestion import IngestionPipeline
 from company_brain.models import GeneratedAnswer, RetrievedChunk
 from company_brain.retrieval import EXPERT_OPTIONS, Retriever, expert_for_ui_choice
+from company_brain.supabase_store import SupabaseDocumentStore
 
 
 st.set_page_config(page_title="Company Brain", layout="wide")
@@ -145,6 +150,21 @@ def _answer_generator() -> AnswerGenerator:
     return AnswerGenerator(_settings())
 
 
+@st.cache_resource
+def _ingestion_pipeline() -> IngestionPipeline:
+    return IngestionPipeline(_settings())
+
+
+@st.cache_resource
+def _document_store() -> SupabaseDocumentStore:
+    settings = _settings()
+    return SupabaseDocumentStore(
+        settings.supabase_url,
+        settings.supabase_service_role_key,
+        settings.supabase_storage_bucket,
+    )
+
+
 def _missing_environment() -> list[str]:
     return [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
 
@@ -194,6 +214,55 @@ def _run_company_brain(
     chunks = _retriever().retrieve(question, expert=selected_expert, top_k=top_k)
     generated = _answer_generator().generate(question, chunks, selected_expert)
     return generated, chunks
+
+
+def _session_id() -> str:
+    if "chat_session_id" not in st.session_state:
+        st.session_state.chat_session_id = str(uuid.uuid4())
+    return st.session_state.chat_session_id
+
+
+def _chunk_sources(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
+    return [
+        {
+            "chunk_id": chunk.id,
+            "document_id": chunk.document_id,
+            "file_name": chunk.file_name,
+            "page_number": chunk.page_number,
+            "sheet_name": chunk.sheet_name,
+            "heading": chunk.heading,
+            "similarity": chunk.similarity,
+        }
+        for chunk in chunks
+    ]
+
+
+def _persist_chat_message(
+    role: str,
+    content: str,
+    chunks: list[RetrievedChunk] | None = None,
+) -> None:
+    try:
+        _document_store().insert_chat_message(
+            session_id=_session_id(),
+            role=role,
+            content=content,
+            sources=_chunk_sources(chunks or []),
+        )
+    except Exception:
+        logging.exception("Failed to persist chat message")
+
+
+def _ingest_uploaded_file(uploaded_file, expert_choice: str) -> int:
+    selected_expert = expert_for_ui_choice(expert_choice)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir) / uploaded_file.name
+        temp_path.write_bytes(uploaded_file.getbuffer())
+        return _ingestion_pipeline().ingest_file(
+            temp_path,
+            expert=selected_expert,
+            topic=Path(uploaded_file.name).stem,
+        )
 
 
 def _render_result(
@@ -278,6 +347,23 @@ st.caption("Guided search for past decisions, regulations, reasoning, and risks.
 
 is_configured = _render_setup_check(_missing_environment())
 
+with st.expander("Upload Documents", expanded=False):
+    st.write("Upload PDFs, Word documents, or Excel workbooks into Supabase.")
+    uploaded_files = st.file_uploader(
+        "Documents",
+        type=["pdf", "docx", "xlsx"],
+        accept_multiple_files=True,
+        disabled=not is_configured,
+    )
+    if st.button("Upload and Index", disabled=not is_configured or not uploaded_files):
+        total_chunks = 0
+        progress = st.progress(0)
+        for index, uploaded_file in enumerate(uploaded_files or [], start=1):
+            with st.spinner(f"Indexing {uploaded_file.name}..."):
+                total_chunks += _ingest_uploaded_file(uploaded_file, expert_choice)
+            progress.progress(index / len(uploaded_files))
+        st.success(f"Indexed {total_chunks} chunks from {len(uploaded_files)} file(s).")
+
 guided_tab, direct_tab = st.tabs(["Guided Case Finder", "Direct Question"])
 
 with guided_tab:
@@ -328,11 +414,13 @@ with guided_tab:
         )
         with st.spinner("Searching indexed knowledge and building a case card..."):
             try:
+                _persist_chat_message("user", question)
                 answer, chunks = _run_company_brain(question, expert_choice, top_k)
             except RuntimeError as exc:
                 st.error(str(exc))
             else:
                 _render_result(answer, chunks, show_chunks)
+                _persist_chat_message("assistant", answer.answer, chunks)
 
 with direct_tab:
     st.subheader("Ask Directly")
@@ -352,6 +440,7 @@ with direct_tab:
 
     if question and is_configured:
         st.session_state.messages.append({"role": "user", "content": question})
+        _persist_chat_message("user", question)
         with st.chat_message("user"):
             st.markdown(question)
 
@@ -378,3 +467,4 @@ with direct_tab:
                     st.session_state.messages.append(
                         {"role": "assistant", "content": full_response}
                     )
+                    _persist_chat_message("assistant", full_response, chunks)
