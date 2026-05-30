@@ -30,6 +30,10 @@ class EmployeeAccount:
     def access_label(self) -> str:
         return access_label(self.access_level)
 
+    @property
+    def username(self) -> str:
+        return self.email.split("@", 1)[0]
+
 
 DEMO_EMPLOYEES = [
     EmployeeAccount(
@@ -54,6 +58,12 @@ DEMO_EMPLOYEES = [
         access_level=CONFIDENTIAL_ACCESS,
     ),
 ]
+
+DEMO_EMPLOYEE_PASSWORDS = {
+    "anna.keller": "anna123",
+    "ben.meier": "ben123",
+    "clara.rossi": "clara123",
+}
 
 
 def access_label(access_level: int) -> str:

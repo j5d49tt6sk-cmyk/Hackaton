@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import logging
 import os
 import socket
@@ -63,6 +64,7 @@ import streamlit as st
 
 from company_brain.access_control import (
     DEMO_EMPLOYEES,
+    DEMO_EMPLOYEE_PASSWORDS,
     EmployeeAccount,
     access_options,
 )
@@ -140,6 +142,21 @@ st.markdown(
     section[data-testid="stSidebar"] {
         display: none;
     }
+
+    .login-badge {
+        position: fixed;
+        top: 14px;
+        right: 24px;
+        z-index: 999;
+        background: rgba(250, 250, 250, 0.92);
+        border: 1px solid rgba(49, 51, 63, 0.18);
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: #31333f;
+        font-size: 0.84rem;
+        line-height: 1.25;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
     </style>
     """.replace("__LOGO_BACKGROUND_CSS__", _logo_background_css),
     unsafe_allow_html=True,
@@ -175,12 +192,6 @@ def _uses_ollama_backend() -> bool:
     return os.getenv("COMPANY_BRAIN_BACKEND", "").lower() == "ollama"
 
 
-def _entered_password_is_valid() -> bool:
-    expected_password = os.getenv("COMPANY_BRAIN_PASSWORD", "realesthacks")
-    entered_password = st.session_state.get("company_brain_password", "")
-    return entered_password == expected_password
-
-
 def _is_authenticated() -> bool:
     return bool(st.session_state.get("employee_user_id"))
 
@@ -204,54 +215,82 @@ def _current_employee() -> EmployeeAccount:
     return DEMO_EMPLOYEES[0]
 
 
+def _normalize_login_value(value: str) -> str:
+    return value.strip().lower().replace(" ", ".")
+
+
+def _employee_login_names(employee: EmployeeAccount) -> set[str]:
+    return {
+        _normalize_login_value(employee.username),
+        _normalize_login_value(employee.email),
+        _normalize_login_value(employee.full_name),
+    }
+
+
+def _employee_passwords() -> dict[str, str]:
+    raw_passwords = os.getenv("COMPANY_BRAIN_USER_PASSWORDS", "")
+    if not raw_passwords:
+        return DEMO_EMPLOYEE_PASSWORDS
+    try:
+        parsed = json.loads(raw_passwords)
+    except json.JSONDecodeError:
+        parsed = {
+            key.strip(): value.strip()
+            for item in raw_passwords.split(",")
+            if "=" in item
+            for key, value in [item.split("=", 1)]
+        }
+    if not isinstance(parsed, dict):
+        return DEMO_EMPLOYEE_PASSWORDS
+    return {
+        _normalize_login_value(str(username)): str(password)
+        for username, password in parsed.items()
+    }
+
+
+def _employee_for_login(username: str) -> EmployeeAccount | None:
+    normalized = _normalize_login_value(username)
+    for employee in _employee_accounts():
+        if normalized in _employee_login_names(employee):
+            return employee
+    return None
+
+
+def _password_is_valid(employee: EmployeeAccount, password: str) -> bool:
+    passwords = _employee_passwords()
+    for login_name in _employee_login_names(employee):
+        if passwords.get(login_name) == password:
+            return True
+    return False
+
+
 def _render_login_gate() -> None:
     st.title("Company Brain")
-    st.caption("Choose a demo employee account to apply document access controls.")
-
-    employees = _employee_accounts()
-    labels = [
-        (
-            f"{employee.full_name} | {employee.department} | "
-            f"{employee.access_label}"
-        )
-        for employee in employees
-    ]
+    st.caption("Sign in with your employee account.")
 
     with st.form("employee_login_form"):
-        selected_label = st.selectbox("Employee", labels)
-        submitted = st.form_submit_button("Continue", type="primary")
+        username = st.text_input(
+            "Username",
+            placeholder="Example: anna.keller",
+            autocomplete="username",
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            autocomplete="current-password",
+        )
+        submitted = st.form_submit_button("Log In", type="primary")
 
     if submitted:
-        selected_employee = employees[labels.index(selected_label)]
-        st.session_state.employee_user_id = selected_employee.user_id
-        st.session_state.employee_access_level = selected_employee.access_level
-        st.session_state.employee_name = selected_employee.full_name
+        employee = _employee_for_login(username)
+        if employee is None or not _password_is_valid(employee, password):
+            st.error("Invalid username or password.")
+            return
+        st.session_state.employee_user_id = employee.user_id
+        st.session_state.employee_access_level = employee.access_level
+        st.session_state.employee_name = employee.full_name
         st.session_state.company_brain_authenticated = True
         st.rerun()
-
-
-def _render_password_gate() -> None:
-    if not st.session_state.get("company_brain_authenticated"):
-        st.title("Company Brain")
-        st.caption("Protected access for the hackathon demo.")
-
-        with st.form("password_form"):
-            st.text_input(
-                "Password",
-                type="password",
-                key="company_brain_password",
-                placeholder="Enter access password",
-            )
-            submitted = st.form_submit_button("Unlock", type="primary")
-
-        if submitted:
-            if _entered_password_is_valid():
-                st.session_state.company_brain_authenticated = True
-                st.rerun()
-            else:
-                st.error("Wrong password.")
-    else:
-        _render_login_gate()
 
 
 def _requester_access_level() -> int:
@@ -263,19 +302,23 @@ PUBLIC_FALLBACK_ACCESS = 1
 
 def _render_employee_badge() -> None:
     employee = _current_employee()
-    badge_column, logout_column = st.columns([0.78, 0.22])
-    with badge_column:
-        st.caption(
-            f"Signed in as {employee.full_name} ({employee.department}) | "
-            f"User ID: {employee.user_id} | "
-            f"Access: {employee.access_label} (level {employee.access_level})"
-        )
+    st.markdown(
+        (
+            '<div class="login-badge">'
+            f"You're logged in as <strong>{employee.full_name}</strong><br>"
+            f"{employee.department} | {employee.access_label}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    _, logout_column = st.columns([0.86, 0.14])
     with logout_column:
         if st.button("Switch User", use_container_width=True):
             for key in (
                 "employee_user_id",
                 "employee_access_level",
                 "employee_name",
+                "company_brain_authenticated",
                 "case_overview",
                 "case_result",
                 "quick_result",
@@ -834,7 +877,7 @@ def _stored_result(mode: str) -> dict[str, object] | None:
 
 
 if not _is_authenticated():
-    _render_password_gate()
+    _render_login_gate()
     st.stop()
 
 
