@@ -20,18 +20,32 @@ class SupabaseDocumentStore:
         self._client: Client = create_client(url, service_role_key)
         self._bucket = bucket
 
-    def upload_file(self, path: Path, document_id: int) -> str:
+    def upload_file(self, path: Path, document_id: str) -> str:
         storage_path = f"documents/{document_id}/{path.name}"
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         with path.open("rb") as handle:
-            self._client.storage.from_(self._bucket).upload(
-                storage_path,
-                handle,
-                {"content-type": content_type, "upsert": "true"},
-            )
+            try:
+                self._client.storage.from_(self._bucket).upload(
+                    storage_path,
+                    handle,
+                    {"content-type": content_type, "upsert": "true"},
+                )
+            except Exception as exc:
+                if "Bucket not found" not in str(exc):
+                    raise
+                self._client.storage.create_bucket(
+                    self._bucket,
+                    options={"public": False},
+                )
+                handle.seek(0)
+                self._client.storage.from_(self._bucket).upload(
+                    storage_path,
+                    handle,
+                    {"content-type": content_type, "upsert": "true"},
+                )
         return storage_path
 
-    def find_existing_document_id(self, path: Path) -> int | None:
+    def find_existing_document_id(self, path: Path) -> str | None:
         result = (
             self._client.table("documents")
             .select("id")
@@ -43,9 +57,9 @@ class SupabaseDocumentStore:
         )
         if not result.data:
             return None
-        return int(result.data[0]["id"])
+        return str(result.data[0]["id"])
 
-    def delete_document(self, document_id: int) -> None:
+    def delete_document(self, document_id: str) -> None:
         result = (
             self._client.table("documents")
             .select("storage_path")
@@ -69,7 +83,7 @@ class SupabaseDocumentStore:
         access_level: int,
         access_tag: str,
         metadata: dict[str, Any] | None = None,
-    ) -> int:
+    ) -> str:
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         row = {
             "file_name": path.name,
@@ -86,24 +100,24 @@ class SupabaseDocumentStore:
             "status": "created",
         }
         result = self._client.table("documents").insert(row).execute()
-        return int(result.data[0]["id"])
+        return str(result.data[0]["id"])
 
     def update_document(
         self,
-        document_id: int,
+        document_id: str,
         values: dict[str, Any],
     ) -> None:
         self._client.table("documents").update(values).eq("id", document_id).execute()
 
     def insert_document_text(
         self,
-        document_id: int,
+        document_id: str,
         raw_text: str,
         cleaned_text: str,
         access_level: int,
         access_tag: str,
         metadata: dict[str, Any] | None = None,
-    ) -> int:
+    ) -> str:
         row = {
             "document_id": document_id,
             "raw_text": raw_text,
@@ -113,7 +127,7 @@ class SupabaseDocumentStore:
             "metadata": metadata or {},
         }
         result = self._client.table("document_texts").insert(row).execute()
-        return int(result.data[0]["id"])
+        return str(result.data[0]["id"])
 
     def insert_chunks(
         self,
@@ -122,8 +136,10 @@ class SupabaseDocumentStore:
         access_level: int,
         access_tag: str,
     ) -> int:
+        if len(chunks) != len(embeddings):
+            raise ValueError("Chunks and embeddings must have the same length.")
         rows = []
-        for chunk, embedding in zip(chunks, embeddings, strict=True):
+        for chunk, embedding in zip(chunks, embeddings):
             rows.append(
                 {
                     "document_id": chunk.document_id,
@@ -295,8 +311,8 @@ class SupabaseDocumentStore:
 
 def _to_retrieved_chunk(row: dict[str, Any]) -> RetrievedChunk:
     return RetrievedChunk(
-        id=int(row["id"]),
-        document_id=_optional_int(row.get("document_id")),
+        id=str(row["id"]),
+        document_id=_optional_str(row.get("document_id")),
         content=row["content"],
         source=row.get("source"),
         file_name=row.get("file_name"),
@@ -311,8 +327,8 @@ def _to_retrieved_chunk(row: dict[str, Any]) -> RetrievedChunk:
     )
 
 
-def _optional_int(value: Any) -> int | None:
-    return int(value) if value is not None else None
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _query_tokens(query: str) -> list[str]:

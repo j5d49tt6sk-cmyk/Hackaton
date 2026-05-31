@@ -47,8 +47,8 @@ def normalize_text(text: str) -> str:
 
 def chunk_sections(
     sections: list[ExtractedSection],
-    document_id: int,
-    document_text_id: int | None,
+    document_id: str,
+    document_text_id: str | None,
     expert: str | None,
     topic: str | None,
     chunk_size: int = 1200,

@@ -166,10 +166,14 @@ class IngestionPipeline:
             )
             return inserted
         except Exception as exc:
-            self._document_store.update_document(
-                document_id,
-                {"status": "failed", "error_message": str(exc)},
-            )
+            try:
+                self._document_store.update_document(
+                    document_id,
+                    {"status": "failed", "error_message": str(exc)},
+                )
+            except Exception:
+                logger.exception("Could not write document error_message")
+                self._document_store.update_document(document_id, {"status": "failed"})
             raise
 
     def _insert_in_batches(
@@ -183,9 +187,15 @@ class IngestionPipeline:
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
             if self._settings.use_openai:
-                embeddings = self._embedding_client.embed_texts(
-                    [chunk.content for chunk in batch]
-                )
+                try:
+                    embeddings = self._embedding_client.embed_texts(
+                        [chunk.content for chunk in batch]
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not generate embeddings; storing chunks without embeddings"
+                    )
+                    embeddings = [None] * len(batch)
             else:
                 embeddings = [None] * len(batch)
             inserted += self._document_store.insert_chunks(

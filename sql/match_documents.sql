@@ -1,4 +1,5 @@
 create extension if not exists vector;
+create extension if not exists pgcrypto;
 
 create table if not exists profiles (
   user_id uuid primary key,
@@ -77,8 +78,8 @@ create or replace function match_documents(
   requester_user_id uuid default auth.uid()
 )
 returns table (
-  id bigint,
-  document_id bigint,
+  id uuid,
+  document_id uuid,
   content text,
   source text,
   file_name text,

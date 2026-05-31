@@ -16,8 +16,8 @@ class ExtractedSection:
 @dataclass(frozen=True)
 class DocumentChunk:
     content: str
-    document_id: int
-    document_text_id: int | None
+    document_id: str
+    document_text_id: str | None
     chunk_index: int
     expert: str | None = None
     topic: str | None = None
@@ -29,8 +29,8 @@ class DocumentChunk:
 
 @dataclass(frozen=True)
 class RetrievedChunk:
-    id: int
-    document_id: int | None
+    id: str
+    document_id: str | None
     content: str
     source: str | None
     file_name: str | None

@@ -1,11 +1,12 @@
 create extension if not exists vector;
+create extension if not exists pgcrypto;
 
 insert into storage.buckets (id, name, public)
 values ('rag-documents', 'rag-documents', false)
 on conflict (id) do nothing;
 
 create table if not exists documents (
-  id bigserial primary key,
+  id uuid primary key default gen_random_uuid(),
   file_name text not null,
   original_file_name text,
   storage_bucket text not null default 'rag-documents',
@@ -36,8 +37,8 @@ create table if not exists profiles (
 );
 
 create table if not exists document_texts (
-  id bigserial primary key,
-  document_id bigint not null references documents(id) on delete cascade,
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid not null references documents(id) on delete cascade,
   raw_text text not null,
   cleaned_text text not null,
   metadata jsonb not null default '{}'::jsonb,
@@ -51,9 +52,9 @@ alter table document_texts
 add column if not exists access_tag text not null default 'L1 Public';
 
 create table if not exists document_chunks (
-  id bigserial primary key,
-  document_id bigint not null references documents(id) on delete cascade,
-  document_text_id bigint references document_texts(id) on delete cascade,
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid not null references documents(id) on delete cascade,
+  document_text_id uuid references document_texts(id) on delete cascade,
   chunk_index int not null,
   content text not null,
   embedding vector(1536),
@@ -264,8 +265,8 @@ create or replace function match_documents(
   requester_user_id uuid default auth.uid()
 )
 returns table (
-  id bigint,
-  document_id bigint,
+  id uuid,
+  document_id uuid,
   content text,
   source text,
   file_name text,
