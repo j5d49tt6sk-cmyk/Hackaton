@@ -884,18 +884,16 @@ def _render_contact_profiles(collaborators: object) -> None:
                         "Subject",
                         value="Question about a similar case",
                     )
+                    default_message = f"Dear {name.split()[0]},\n\n\nBest,"
                     message = st.text_area(
                         "Message",
-                        value=(
-                            f"Dear {name.split()[0]},\n\n"
-                            "Insert your message here.\n\n"
-                            "Best,"
-                        ),
+                        value=default_message,
+                        placeholder="Add your question or follow-up here.",
                         height=150,
                     )
                     submitted = st.form_submit_button("Send Mail", type="primary")
                 if submitted:
-                    if not subject.strip() or not message.strip():
+                    if not subject.strip() or message.strip() == default_message.strip():
                         st.error("Please add a subject and message.")
                     else:
                         _remember_sent_mail(recipient, subject.strip(), message.strip())
