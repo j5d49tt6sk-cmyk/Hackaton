@@ -1124,23 +1124,9 @@ def _upload_signature(uploaded_file) -> str:
 
 def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
     st.markdown("### Upload")
-    st.caption("Files are chunked and added to Company Brain immediately.")
-    if _use_local_upload_store():
-        if _supabase_is_configured():
-            st.caption("Upload destination: local knowledge store and Supabase")
-        else:
-            st.caption("Upload destination: local knowledge store")
-    else:
-        st.caption("Upload destination: Supabase")
-    database_issues = _database_environment_issues()
-    if database_issues:
-        st.caption(
-            "Database persistence is waiting for: "
-            + ", ".join(f"`{issue}`" for issue in database_issues)
-        )
+    st.caption("Choose documents to add them to Company Brain.")
     selected_access_level = _requester_access_level()
     selected_access_label = access_tag(selected_access_level)
-    st.caption(f"Uploaded files inherit your access: {selected_access_label}")
     uploaded_files = st.file_uploader(
         "Documents",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],

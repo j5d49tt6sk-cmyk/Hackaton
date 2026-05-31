@@ -204,7 +204,7 @@ class LocalKnowledgeStore:
             )
         except LocalEmbeddingError:
             return
-        for row, embedding in zip(rows, embeddings, strict=False):
+        for row, embedding in zip(rows, embeddings):
             row["embedding"] = embedding
             row.setdefault("metadata", {})["embedding_model"] = self._embedding_model
 
