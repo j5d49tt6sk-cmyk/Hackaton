@@ -514,12 +514,40 @@ def _retrieve_company_brain(
 ) -> list[RetrievedChunk]:
     selected_expert = expert_for_ui_choice(expert_choice)
     if _use_local_knowledge_store():
-        return _local_knowledge_store().retrieve(
+        local_chunks = _local_knowledge_store().retrieve(
             question,
             expert=selected_expert,
             top_k=top_k,
             requester_access_level=_requester_access_level(),
         )
+        if not _supabase_is_configured():
+            return local_chunks
+        try:
+            database_chunks = _document_store().exact_search_documents(
+                query=question,
+                top_k=top_k,
+                expert=selected_expert,
+                requester_user_id=_requester_user_id(),
+                include_inaccessible=True,
+            )
+            if not database_chunks:
+                database_chunks = _document_store().keyword_search_documents(
+                    query=question,
+                    top_k=top_k,
+                    expert=selected_expert,
+                    requester_user_id=_requester_user_id(),
+                    include_inaccessible=True,
+                    scan_limit=5000,
+                )
+            database_chunks = [
+                chunk
+                for chunk in database_chunks
+                if _chunk_access_level(chunk) <= _requester_access_level()
+            ]
+        except Exception:
+            logging.exception("Failed to retrieve from Supabase; using local chunks")
+            return local_chunks
+        return _merge_retrieved_chunks(database_chunks, local_chunks, top_k)
 
     return _retriever().retrieve(
         question,
@@ -527,6 +555,24 @@ def _retrieve_company_brain(
         top_k=top_k,
         requester_user_id=_requester_user_id(),
     )
+
+
+def _merge_retrieved_chunks(
+    primary_chunks: list[RetrievedChunk],
+    fallback_chunks: list[RetrievedChunk],
+    top_k: int,
+) -> list[RetrievedChunk]:
+    merged: list[RetrievedChunk] = []
+    seen: set[tuple[str | None, int | None, str | None]] = set()
+    for chunk in [*primary_chunks, *fallback_chunks]:
+        key = (chunk.file_name or chunk.source, chunk.chunk_index, chunk.content[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(chunk)
+        if len(merged) >= top_k:
+            break
+    return merged
 
 
 def _generate_company_brain_answer(
@@ -567,7 +613,12 @@ def _case_key(chunk: RetrievedChunk) -> str:
 
 
 def _case_title(chunk: RetrievedChunk) -> str:
-    title = chunk.topic or chunk.file_name or chunk.source or "Untitled case"
+    file_name = chunk.file_name or ""
+    topic = chunk.topic or ""
+    if file_name.startswith("Case_") or topic.lower() in {"uploads", "cases"}:
+        title = file_name or chunk.source or topic or "Untitled case"
+    else:
+        title = topic or file_name or chunk.source or "Untitled case"
     if title.endswith((".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv")):
         title = Path(title).stem
     return title.replace("_", " ").strip()
@@ -858,7 +909,11 @@ def _remember_sent_mail(recipient: str, subject: str, message: str) -> None:
         )
 
 
-def _render_contact_profiles(collaborators: object) -> None:
+def _streamlit_key(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_") or "item"
+
+
+def _render_contact_profiles(collaborators: object, context_key: str) -> None:
     if not isinstance(collaborators, list) or not collaborators:
         return
     st.caption("Mitarbeiter kontaktieren:")
@@ -879,7 +934,10 @@ def _render_contact_profiles(collaborators: object) -> None:
                 if not recipient or recipient == "unknown":
                     st.info("No email address is available for this contact.")
                     continue
-                with st.form(f"contact_mail_{index}_{recipient}"):
+                form_key = _streamlit_key(
+                    f"contact_mail_{context_key}_{index}_{recipient}"
+                )
+                with st.form(form_key):
                     subject = st.text_input(
                         "Subject",
                         value="Question about a similar case",
@@ -968,6 +1026,8 @@ def _render_case_overview(
         if not isinstance(chunks, list):
             continue
         title = str(case.get("title") or "Untitled case")
+        if title.lower() == "uploads" and chunks:
+            title = _case_title(chunks[0])
         similarity = _similarity_percent(float(case.get("best_similarity", 0.0)))
         access_level = int(case.get("access_level") or 1)
         collaborators = case.get("collaborators") or []
@@ -980,7 +1040,7 @@ def _render_case_overview(
                 source = chunks[0].file_name or chunks[0].source or "Unknown source"
                 st.caption(source)
             st.caption(f"Required access: {access_label(access_level)} (level {access_level})")
-            _render_contact_profiles(collaborators)
+            _render_contact_profiles(collaborators, f"{heading}_{key}_{index}")
             if not can_open:
                 st.caption("Locked: bitte einen der Mitarbeiter kontaktieren.")
         with match_column:
@@ -988,7 +1048,7 @@ def _render_case_overview(
         with action_column:
             if st.button(
                 "Open",
-                key=f"select_case_{index}",
+                key=_streamlit_key(f"select_case_{heading}_{key}_{index}"),
                 use_container_width=True,
                 disabled=not can_open,
             ):
@@ -1442,7 +1502,7 @@ with main_column:
                         answer, chunks = _run_company_brain(
                             direct_question,
                             expert_choice,
-                            top_k,
+                            max(top_k, 12),
                             answer_style="plain",
                         )
                     except RuntimeError as exc:

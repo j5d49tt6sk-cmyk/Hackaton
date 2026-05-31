@@ -251,6 +251,78 @@ class SupabaseDocumentStore:
             for score, row in scored[:top_k]
         ]
 
+    def exact_search_documents(
+        self,
+        query: str,
+        top_k: int,
+        expert: str | None = None,
+        requester_user_id: str | None = None,
+        include_inaccessible: bool = False,
+    ) -> list[RetrievedChunk]:
+        phrase = query.strip()
+        if len(phrase) < 3:
+            return []
+        requester_access_level = (
+            self._requester_access_level(requester_user_id)
+            if requester_user_id and not include_inaccessible
+            else 0
+        )
+        request = (
+            self._client.table("document_chunks")
+            .select(
+                "id, document_id, content, chunk_index, page_number, sheet_name, "
+                "heading, expert, topic, access_level, access_tag, metadata, "
+                "documents(file_name, source, access_level, access_tag)"
+            )
+            .ilike("content", f"%{_escape_like(phrase)}%")
+            .lt("access_level", 99)
+            .limit(top_k)
+        )
+        if not include_inaccessible:
+            request = request.lte("access_level", requester_access_level)
+        if expert:
+            request = request.eq("expert", expert)
+        result = request.execute()
+        chunks = [
+            _to_retrieved_chunk(_keyword_row_to_retrieved(row, 10.0))
+            for row in result.data or []
+        ]
+        if chunks:
+            return chunks
+
+        scored_rows: list[tuple[float, dict[str, Any]]] = []
+        seen_ids: set[str] = set()
+        for token in _query_tokens(phrase):
+            token_request = (
+                self._client.table("document_chunks")
+                .select(
+                    "id, document_id, content, chunk_index, page_number, sheet_name, "
+                    "heading, expert, topic, access_level, access_tag, metadata, "
+                    "documents(file_name, source, access_level, access_tag)"
+                )
+                .ilike("content", f"%{_escape_like(token)}%")
+                .lt("access_level", 99)
+                .limit(top_k)
+            )
+            if not include_inaccessible:
+                token_request = token_request.lte("access_level", requester_access_level)
+            if expert:
+                token_request = token_request.eq("expert", expert)
+            token_result = token_request.execute()
+            for row in token_result.data or []:
+                row_id = str(row.get("id"))
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+                scored_rows.append((_keyword_score(row.get("content") or "", _query_tokens(phrase)), row))
+
+        scored_rows.sort(key=lambda item: item[0], reverse=True)
+        return [
+            _to_retrieved_chunk(_keyword_row_to_retrieved(row, score))
+            for score, row in scored_rows[:top_k]
+            if score > 0
+        ]
+
     def _requester_access_level(self, requester_user_id: str) -> int:
         try:
             result = (
@@ -268,17 +340,24 @@ class SupabaseDocumentStore:
                 exc_info=True,
             )
 
-        result = (
-            self._client.table("employee_accounts")
-            .select("access_level")
-            .eq("user_id", requester_user_id)
-            .eq("active", True)
-            .limit(1)
-            .execute()
-        )
-        if not result.data:
+        try:
+            result = (
+                self._client.table("employee_accounts")
+                .select("access_level")
+                .eq("user_id", requester_user_id)
+                .eq("active", True)
+                .limit(1)
+                .execute()
+            )
+            if not result.data:
+                return 0
+            return int(result.data[0]["access_level"])
+        except Exception:
+            logger.debug(
+                "Could not load requester access_level from employee_accounts",
+                exc_info=True,
+            )
             return 0
-        return int(result.data[0]["access_level"])
 
     def insert_chat_message(
         self,
@@ -364,6 +443,10 @@ def _keyword_score(content: str, tokens: list[str]) -> float:
     if matches == 0:
         return 0.0
     return float(matches + coverage * 2)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _keyword_row_to_retrieved(row: dict[str, Any], score: float) -> dict[str, Any]:

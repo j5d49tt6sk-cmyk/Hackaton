@@ -9,6 +9,27 @@ import urllib.request
 from company_brain.models import GeneratedAnswer, RetrievedChunk
 
 
+TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}")
+QUESTION_STOP_WORDS = {
+    "about",
+    "and",
+    "are",
+    "can",
+    "does",
+    "down",
+    "for",
+    "from",
+    "how",
+    "tell",
+    "the",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+}
+
+
 class OllamaAnswerGenerator:
     def __init__(
         self,
@@ -33,6 +54,17 @@ class OllamaAnswerGenerator:
                 sources=[],
                 confidence="Low",
             )
+        if answer_style == "plain":
+            chunks = _rerank_chunks_for_question(question, chunks)
+        if answer_style == "plain" and _evidence_is_not_relevant(question, chunks):
+            return GeneratedAnswer(
+                answer=(
+                    "I could not find relevant information about that in the "
+                    "indexed company cases or documents."
+                ),
+                sources=[],
+                confidence="Low",
+            )
 
         missing_exact_term_answer = _answer_if_exact_term_missing(question, chunks)
         if missing_exact_term_answer:
@@ -40,7 +72,12 @@ class OllamaAnswerGenerator:
 
         prompt = _build_prompt(question, chunks, expert, answer_style)
         answer = self._generate(prompt).strip()
-        if not answer or _looks_like_refusal(answer) or _ollama_is_unreachable(answer):
+        if (
+            not answer
+            or _looks_like_refusal(answer)
+            or _ollama_is_unreachable(answer)
+            or _looks_like_weak_plain_answer(answer, answer_style, chunks)
+        ):
             return _fallback_answer_from_evidence(chunks, answer_style)
         return GeneratedAnswer(
             answer=answer,
@@ -95,8 +132,10 @@ def _build_prompt(
     answer_style: str,
 ) -> str:
     context = []
-    for index, chunk in enumerate(chunks[:5], start=1):
-        content = chunk.content[:1200]
+    max_chunks = 8 if answer_style == "plain" else 5
+    max_chars = 950 if answer_style == "plain" else 1200
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        content = chunk.content[:max_chars]
         context.append(
             "\n".join(
                 [
@@ -110,10 +149,12 @@ def _build_prompt(
         )
     if answer_style == "plain":
         answer_instruction = (
-            "Answer in plain text in 3 to 6 concise sentences. Do not use case-card "
-            "section headings like Problem, Decision, Reasoning, Regulatory "
-            "Requirement, or Risks. Mention uncertainty clearly if the evidence is "
-            "thin."
+            "Write a direct answer for a business user in plain text. Use 4 to 7 "
+            "sentences. Start with the answer, then explain the evidence. Include "
+            "specific names of regulations, controls, risks, decisions, or cases "
+            "that appear in the evidence. If evidence conflicts, say what conflicts. "
+            "Do not use headings, Markdown tables, or generic disclaimers. Do not "
+            "answer from general knowledge."
         )
     elif answer_style == "case_open":
         answer_instruction = (
@@ -129,10 +170,11 @@ def _build_prompt(
         )
 
     return (
-        "You are Company Brain. Answer only from the evidence below. "
-        "Do not add general knowledge about regulations, products, dates, or laws. "
-        "If the evidence is insufficient or does not mention the user's exact term, "
-        f"say so. {answer_instruction}\n\n"
+        "You are Company Brain, an internal knowledge assistant. Your job is to "
+        "turn retrieved internal evidence into a useful answer. Use only the "
+        "evidence below; do not add general knowledge about regulations, products, "
+        "dates, or laws. If the evidence is insufficient, say exactly what is "
+        f"missing. {answer_instruction}\n\n"
         f"Question:\n{question}\n\n"
         f"Evidence:\n{chr(10).join(context)}"
     )
@@ -161,6 +203,67 @@ def _answer_if_exact_term_missing(
     )
 
 
+def _evidence_is_not_relevant(
+    question: str,
+    chunks: list[RetrievedChunk],
+) -> bool:
+    best_similarity = max((chunk.similarity for chunk in chunks), default=0.0)
+    if best_similarity >= 0.52:
+        return False
+
+    query_tokens = _meaningful_tokens(question)
+    if not query_tokens:
+        return False
+
+    evidence_text = " ".join(
+        " ".join(
+            [
+                chunk.file_name or "",
+                chunk.topic or "",
+                chunk.heading or "",
+                chunk.content[:1200],
+            ]
+        )
+        for chunk in chunks[:5]
+    )
+    evidence_tokens = _meaningful_tokens(evidence_text)
+    overlap_ratio = len(query_tokens & evidence_tokens) / len(query_tokens)
+    return overlap_ratio < 0.75
+
+
+def _rerank_chunks_for_question(
+    question: str,
+    chunks: list[RetrievedChunk],
+) -> list[RetrievedChunk]:
+    query_tokens = _meaningful_tokens(question)
+    if not query_tokens:
+        return chunks
+
+    def score(chunk: RetrievedChunk) -> float:
+        title_tokens = _meaningful_tokens(
+            " ".join([chunk.file_name or "", chunk.topic or "", chunk.heading or ""])
+        )
+        content_tokens = _meaningful_tokens(chunk.content[:1600])
+        title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
+        content_overlap = len(query_tokens & content_tokens) / len(query_tokens)
+        exact_phrase_bonus = 0.2 if _compact(question) in _compact(chunk.content[:2200]) else 0.0
+        return chunk.similarity + (title_overlap * 0.35) + (content_overlap * 0.25) + exact_phrase_bonus
+
+    return sorted(chunks, key=score, reverse=True)
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    return {
+        match.group(0).lower()
+        for match in TOKEN_PATTERN.finditer(text)
+        if match.group(0).lower() not in QUESTION_STOP_WORDS
+    }
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
 def _looks_like_refusal(answer: str) -> bool:
     lowered = answer.lower()
     refusal_markers = [
@@ -172,6 +275,32 @@ def _looks_like_refusal(answer: str) -> bool:
     return any(marker in lowered for marker in refusal_markers)
 
 
+def _looks_like_weak_plain_answer(
+    answer: str,
+    answer_style: str,
+    chunks: list[RetrievedChunk],
+) -> bool:
+    if answer_style != "plain" or not chunks:
+        return False
+    lowered = answer.lower()
+    weak_markers = [
+        "i don't know",
+        "i do not know",
+        "cannot determine",
+        "not enough information",
+        "no relevant information",
+        "unable to answer",
+    ]
+    formatting_drift = bool(re.search(r"(?m)^\s*\d+[\.)]\s+", answer)) or "**" in answer
+    too_broad = len(answer.split()) > 180
+    return (
+        len(answer.split()) < 35
+        or any(marker in lowered for marker in weak_markers)
+        or formatting_drift
+        or too_broad
+    )
+
+
 def _ollama_is_unreachable(answer: str) -> bool:
     return "ollama is not reachable" in answer.lower()
 
@@ -181,11 +310,7 @@ def _fallback_answer_from_evidence(
     answer_style: str,
 ) -> GeneratedAnswer:
     if answer_style == "plain":
-        excerpt = _clean_whitespace(chunks[0].content[:700])
-        answer = (
-            "The selected evidence directly matches the question. "
-            f"It states: {excerpt}"
-        )
+        answer = _plain_answer_from_evidence(chunks)
     elif answer_style == "case_open":
         sections = _extract_case_sections(chunks[0].content)
         problem = sections.get("problem", "Not specified in the selected case.")
@@ -224,6 +349,92 @@ def _fallback_answer_from_evidence(
         sources=_unique_sources(chunks),
         confidence="Medium",
     )
+
+
+def _plain_answer_from_evidence(chunks: list[RetrievedChunk]) -> str:
+    case_answer = _plain_case_answer(chunks)
+    if case_answer:
+        return case_answer
+
+    selected_sentences: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks[:6]:
+        for sentence in _evidence_sentences(chunk.content):
+            normalized = sentence.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            selected_sentences.append(sentence)
+            if len(selected_sentences) >= 5:
+                break
+        if len(selected_sentences) >= 5:
+            break
+
+    if not selected_sentences:
+        selected_sentences = [_clean_whitespace(chunks[0].content[:700])]
+
+    source_names = _unique_sources(chunks[:4])
+    source_text = ", ".join(source_names)
+    return (
+        "Based on the retrieved company evidence, "
+        + " ".join(selected_sentences)
+        + (f" The strongest sources are {source_text}." if source_text else "")
+    )
+
+
+def _plain_case_answer(chunks: list[RetrievedChunk]) -> str | None:
+    for chunk in chunks[:4]:
+        sections = _extract_case_sections(chunk.content)
+        if not sections:
+            continue
+        topic = chunk.topic or ""
+        if topic.lower() in {"uploads", "cases"}:
+            title = chunk.file_name or chunk.source or "the selected case"
+        else:
+            title = topic or chunk.file_name or "the selected case"
+        if title.endswith((".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv")):
+            title = title.rsplit(".", 1)[0].replace("_", " ")
+        problem = sections.get("problem")
+        decision = sections.get("decision")
+        reasoning = sections.get("reasoning")
+        regulations = sections.get("regulatory_requirements")
+        risks = sections.get("risks")
+        parts = [f"The closest matching evidence is {title}."]
+        if problem:
+            parts.append(f"The problem was that {_sentence_fragment(problem)}.")
+        if decision:
+            parts.append(f"The recorded decision was to {_sentence_fragment(decision)}.")
+        if reasoning:
+            parts.append(f"The reasoning was that {_sentence_fragment(reasoning)}.")
+        if regulations:
+            parts.append(f"The regulations or requirements mentioned are {_clean_sentence(regulations)}.")
+        if risks:
+            parts.append(f"The main risks were {_sentence_fragment(risks)}.")
+        return " ".join(parts)
+    return None
+
+
+def _sentence_fragment(value: str) -> str:
+    cleaned = _clean_sentence(value)
+    return cleaned[0].lower() + cleaned[1:] if cleaned else cleaned
+
+
+def _clean_sentence(value: str) -> str:
+    return _clean_whitespace(value).replace("- ", "-").rstrip(".")
+
+
+def _evidence_sentences(content: str) -> list[str]:
+    cleaned = _clean_whitespace(content)
+    candidates = re.split(r"(?<=[.!?])\s+|(?:\s+-\s+)", cleaned)
+    useful: list[str] = []
+    for candidate in candidates:
+        sentence = candidate.strip(" -")
+        if len(sentence.split()) < 6:
+            continue
+        if len(sentence) > 320:
+            sentence = sentence[:317].rsplit(" ", 1)[0] + "..."
+        useful.append(sentence)
+    return useful
 
 
 def _extract_case_sections(content: str) -> dict[str, str]:
