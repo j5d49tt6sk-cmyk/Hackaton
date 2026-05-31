@@ -1259,7 +1259,8 @@ def _render_case_overview(
                 source = chunks[0].file_name or chunks[0].source or "Unknown source"
                 st.caption(source)
             st.caption(f"Required access: {access_label(access_level)} (level {access_level})")
-            _render_contact_profiles(collaborators, f"{heading}_{key}_{index}")
+            contact_context_key = _streamlit_key(f"{heading}_{key or title}_{index}")
+            _render_contact_profiles(collaborators, contact_context_key)
             if not can_open:
                 st.caption("Locked: bitte einen der Mitarbeiter kontaktieren.")
         with match_column:
