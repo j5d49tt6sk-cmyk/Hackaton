@@ -362,7 +362,16 @@ def _password_is_valid(employee: EmployeeAccount, password: str) -> bool:
     return False
 
 
+def _render_brand_logo(width: int = 120) -> None:
+    if _brand_logo_path.exists():
+        st.image(str(_brand_logo_path), width=width)
+    else:
+        st.markdown("### SIX")
+
+
 def _render_login_gate() -> None:
+    _render_brand_logo()
+    st.markdown('<div class="six-top-divider"></div>', unsafe_allow_html=True)
     st.title("Company Brain")
     st.caption("Sign in with your employee account.")
 
@@ -437,10 +446,7 @@ def _render_brand_strip() -> None:
 def _render_top_brand() -> None:
     logo_column, account_column = st.columns([0.28, 0.72], gap="large")
     with logo_column:
-        if _brand_logo_path.exists():
-            st.image(str(_brand_logo_path), width=120)
-        else:
-            st.markdown("### SIX")
+        _render_brand_logo()
     with account_column:
         with st.container(key="top_account_area"):
             _render_employee_badge()
