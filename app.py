@@ -845,6 +845,19 @@ def _employee_profile(employee: EmployeeAccount) -> dict[str, object]:
     }
 
 
+def _remember_sent_mail(recipient: str, subject: str, message: str) -> None:
+    sent_mail = st.session_state.setdefault("sent_contact_mail", [])
+    if isinstance(sent_mail, list):
+        sent_mail.append(
+            {
+                "recipient": recipient,
+                "subject": subject,
+                "message": message,
+                "sender": _current_employee().full_name,
+            }
+        )
+
+
 def _render_contact_profiles(collaborators: object) -> None:
     if not isinstance(collaborators, list) or not collaborators:
         return
@@ -858,11 +871,36 @@ def _render_contact_profiles(collaborators: object) -> None:
         with column:
             with st.popover(name, use_container_width=True):
                 st.write(f"**{name}**")
-                st.write(f"Email: {collaborator.get('email') or 'unknown'}")
                 st.write(f"Department: {collaborator.get('department') or 'Unknown'}")
                 level = collaborator.get("access_level")
                 if level is not None:
                     st.write(f"Access level: {level}")
+                recipient = str(collaborator.get("email") or "")
+                if not recipient or recipient == "unknown":
+                    st.info("No email address is available for this contact.")
+                    continue
+                with st.form(f"contact_mail_{index}_{recipient}"):
+                    subject = st.text_input(
+                        "Subject",
+                        value="Question about a similar case",
+                    )
+                    message = st.text_area(
+                        "Message",
+                        value=(
+                            f"Hi {name.split()[0]},\n\n"
+                            "I found a related case in Company Brain and would like "
+                            "to ask you a quick follow-up.\n\n"
+                            "Best,"
+                        ),
+                        height=150,
+                    )
+                    submitted = st.form_submit_button("Send Mail", type="primary")
+                if submitted:
+                    if not subject.strip() or not message.strip():
+                        st.error("Please add a subject and message.")
+                    else:
+                        _remember_sent_mail(recipient, subject.strip(), message.strip())
+                        st.success(f"Mail sent to {name}.")
 
 
 def _retrieve_similar_case_chunks(
