@@ -1161,12 +1161,12 @@ def _upload_signature(uploaded_file) -> str:
 
 
 def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
-    st.markdown("### Upload")
-    st.caption("Choose documents to add them to Company Brain.")
+    st.markdown("### Case")
+    st.caption("Choose case files to add them to Company Brain.")
     selected_access_level = _requester_access_level()
     selected_access_label = access_tag(selected_access_level)
     uploaded_files = st.file_uploader(
-        "Documents",
+        "Case files",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
         accept_multiple_files=True,
         disabled=False,
