@@ -869,7 +869,7 @@ def _render_contact_profiles(collaborators: object) -> None:
         column = columns[index % len(columns)]
         name = str(collaborator.get("name") or "Unknown")
         with column:
-            with st.popover(name, use_container_width=True):
+            with st.popover(name, use_container_width=True, width=460):
                 st.write(f"**{name}**")
                 st.write(f"Department: {collaborator.get('department') or 'Unknown'}")
                 level = collaborator.get("access_level")
