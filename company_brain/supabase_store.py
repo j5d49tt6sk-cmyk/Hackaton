@@ -135,6 +135,7 @@ class SupabaseDocumentStore:
         embeddings: list[list[float] | None],
         access_level: int,
         access_tag: str,
+        collaborators: list[dict[str, object]] | None = None,
     ) -> int:
         if len(chunks) != len(embeddings):
             raise ValueError("Chunks and embeddings must have the same length.")
@@ -158,6 +159,7 @@ class SupabaseDocumentStore:
                         **chunk.metadata,
                         "access_level": access_level,
                         "access_tag": access_tag,
+                        "collaborators": collaborators or [],
                     },
                 }
             )

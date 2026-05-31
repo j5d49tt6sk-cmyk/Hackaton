@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from company_brain.access_control import infer_document_access
+from company_brain.access_control import data_case_access_level, infer_document_access
 from company_brain.chunking import split_text
 from company_brain.loaders import extract_sections
 from company_brain.metadata import infer_expert, infer_topic
@@ -55,6 +55,7 @@ class LocalKnowledgeStore:
         overlap: int = 180,
         access_level: int | None = None,
         access_tag: str | None = None,
+        collaborators: list[dict[str, object]] | None = None,
     ) -> int:
         stored_path = self._uploads_dir / source_path.name
         stored_path.write_bytes(source_path.read_bytes())
@@ -91,6 +92,7 @@ class LocalKnowledgeStore:
                             "local_backend": True,
                             "access_level": document_access_level,
                             "access_tag": document_access_tag,
+                            "collaborators": collaborators or [],
                             "embedding_model": self._embedding_model,
                         },
                         "similarity": 0.0,
@@ -349,7 +351,10 @@ def _embedding_text(row: dict[str, Any]) -> str:
 
 def _is_accessible(row: dict[str, Any], requester_access_level: int) -> bool:
     metadata = row.get("metadata") or {}
-    document_access_level = int(metadata.get("access_level") or 1)
+    document_access_level = (
+        data_case_access_level(row.get("file_name") or row.get("source") or "")
+        or int(metadata.get("access_level") or 1)
+    )
     return document_access_level < 99 and document_access_level <= requester_access_level
 
 

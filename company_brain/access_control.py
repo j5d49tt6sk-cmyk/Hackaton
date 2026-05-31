@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,7 +88,19 @@ def access_options() -> list[tuple[str, int]]:
     ]
 
 
+def data_case_access_level(path: Path | str) -> int | None:
+    match = re.search(r"Case_(\d+)_", str(path))
+    if not match:
+        return None
+    case_number = int(match.group(1))
+    return ((case_number - 1) % 3) + 1
+
+
 def infer_document_access(path: Path) -> tuple[int, str]:
+    case_access_level = data_case_access_level(path)
+    if case_access_level is not None:
+        return case_access_level, access_tag(case_access_level)
+
     haystack = " ".join(path.parts).replace("_", " ").replace("-", " ").lower()
     if path.suffix.lower() in {".eml", ".msg"} or any(
         token in haystack for token in ("email", "e-mail", "mailbox")

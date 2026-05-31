@@ -160,8 +160,9 @@ def _build_prompt(
         answer_instruction = (
             "Return exactly these Markdown sections in this order: Problem, "
             "Decision, Reasoning, Regulations Used, Regulation Source, Risks. In "
-            "Regulation Source, cite the evidence file where the regulation "
-            "reference appears. Keep Risks as the final section. Use only the "
+            "Regulation Source, cite only a separate regulation/reference evidence "
+            "file where the regulation reference appears; never cite the opened "
+            "case file itself. Keep Risks as the final section. Use only the "
             "selected evidence and do not add general knowledge."
         )
     else:
@@ -385,10 +386,19 @@ def _plain_answer_from_evidence(chunks: list[RetrievedChunk]) -> str:
 
 
 def _regulation_source(chunks: list[RetrievedChunk]) -> str:
-    sources = _unique_sources(chunks)
+    sources = _unique_sources([chunk for chunk in chunks if not _is_case_chunk(chunk)])
     if not sources:
-        return "Not specified in the selected evidence."
+        return (
+            "No separate regulation source file was found. "
+            "The opened case file is intentionally not used as its own regulation source."
+        )
     return ", ".join(sources[:3])
+
+
+def _is_case_chunk(chunk: RetrievedChunk) -> bool:
+    file_name = chunk.file_name or ""
+    source = chunk.source or ""
+    return file_name.startswith("Case_") or "data_cases/" in source
 
 
 def _plain_case_answer(chunks: list[RetrievedChunk]) -> str | None:

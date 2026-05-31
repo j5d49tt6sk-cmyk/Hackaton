@@ -43,6 +43,7 @@ class IngestionPipeline:
         replace_existing: bool = True,
         access_level: int | None = None,
         access_tag: str | None = None,
+        collaborators: list[dict[str, object]] | None = None,
     ) -> int:
         files = iter_supported_files(root)
         logger.info("Found %s supported files under %s", len(files), root)
@@ -58,6 +59,7 @@ class IngestionPipeline:
                     replace_existing=replace_existing,
                     access_level=access_level,
                     access_tag=access_tag,
+                    collaborators=collaborators,
                 )
             except Exception:
                 logger.exception("Failed to ingest %s", file_path)
@@ -74,6 +76,7 @@ class IngestionPipeline:
         replace_existing: bool = True,
         access_level: int | None = None,
         access_tag: str | None = None,
+        collaborators: list[dict[str, object]] | None = None,
     ) -> int:
         inferred_expert = infer_expert(file_path, expert)
         inferred_topic = infer_topic(file_path, topic)
@@ -102,6 +105,7 @@ class IngestionPipeline:
                 file_path,
                 document_access_level,
                 document_access_tag,
+                collaborators,
             ),
         )
 
@@ -133,6 +137,7 @@ class IngestionPipeline:
                     "extractor": file_path.suffix.lower().lstrip("."),
                     "access_level": document_access_level,
                     "access_tag": document_access_tag,
+                    "collaborators": collaborators or [],
                 },
             )
 
@@ -150,6 +155,7 @@ class IngestionPipeline:
                 batch_size,
                 access_level=document_access_level,
                 access_tag=document_access_tag,
+                collaborators=collaborators,
             )
             self._document_store.update_document(
                 document_id,
@@ -159,6 +165,7 @@ class IngestionPipeline:
                         **_document_metadata(file_path),
                         "access_level": document_access_level,
                         "access_tag": document_access_tag,
+                        "collaborators": collaborators or [],
                         "section_count": len(sections),
                         "chunk_count": inserted,
                     },
@@ -182,6 +189,7 @@ class IngestionPipeline:
         batch_size: int,
         access_level: int,
         access_tag: str,
+        collaborators: list[dict[str, object]] | None = None,
     ) -> int:
         inserted = 0
         for start in range(0, len(chunks), batch_size):
@@ -203,6 +211,7 @@ class IngestionPipeline:
                 embeddings,
                 access_level=access_level,
                 access_tag=access_tag,
+                collaborators=collaborators,
             )
         return inserted
 
@@ -227,6 +236,7 @@ def _document_metadata(
     file_path: Path,
     access_level: int | None = None,
     access_tag: str | None = None,
+    collaborators: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     inferred_access_level, inferred_access_tag = infer_document_access(file_path)
     return {
@@ -235,4 +245,5 @@ def _document_metadata(
         "source_path": str(file_path),
         "access_level": access_level or inferred_access_level,
         "access_tag": access_tag or inferred_access_tag,
+        "collaborators": collaborators or [],
     }

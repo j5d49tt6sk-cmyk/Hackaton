@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import importlib.util
 import json
 import logging
@@ -87,6 +86,7 @@ from company_brain.access_control import (
     EmployeeAccount,
     access_label,
     access_tag,
+    data_case_access_level,
 )
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
@@ -100,45 +100,7 @@ from company_brain.supabase_store import SupabaseDocumentStore
 
 st.set_page_config(page_title="Company Brain", layout="wide")
 
-_logo_path = Path(__file__).with_name("sixlogo.png")
-_logo_background_css = ""
-if _logo_path.exists():
-    _logo_data = base64.b64encode(_logo_path.read_bytes()).decode("ascii")
-    _logo_background_css = f"""
-    .stApp::before {{
-        content: "";
-        position: fixed;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        width: min(156vw, 1960px);
-        height: min(92vw, 1120px);
-        background-image: url("data:image/png;base64,{_logo_data}");
-        background-repeat: no-repeat;
-        background-position: center;
-        background-size: contain;
-        opacity: 0.09;
-        z-index: 0;
-        pointer-events: none;
-    }}
-    """
-else:
-    _logo_background_css = """
-    .stApp::before {
-        content: "SIX";
-        position: fixed;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        font-size: min(38vw, 500px);
-        font-weight: 800;
-        letter-spacing: 0;
-        color: rgba(230, 0, 18, 0.06);
-        z-index: 0;
-        pointer-events: none;
-        line-height: 1;
-    }
-    """
+_brand_logo_path = Path(__file__).with_name("six_group_logo.png")
 
 st.markdown(
     """
@@ -152,8 +114,6 @@ st.markdown(
         background: #fafafa;
     }
 
-    __LOGO_BACKGROUND_CSS__
-
     [data-testid="stAppViewContainer"] > .main {
         position: relative;
         z-index: 1;
@@ -163,22 +123,140 @@ st.markdown(
         display: none;
     }
 
+    .stMarkdown h5 {
+        margin: 0.85rem 0 0.25rem;
+        font-size: 1rem;
+        font-weight: 650;
+    }
+
+    .mode-selector-spacer {
+        width: 100%;
+        margin: 0.45rem 0 1.8rem;
+    }
+
+    .six-header-divider {
+        height: 4px;
+        width: 100%;
+        background: #e30613;
+        margin: 0.8rem 0 1.15rem;
+    }
+
+    .six-top-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        margin: 0 0 0.55rem;
+    }
+
+    .six-top-divider {
+        height: 3px;
+        width: 100%;
+        background: #e30613;
+        margin: 0 0 1.5rem;
+    }
+
+    .app-title-block {
+        text-align: center;
+        margin-bottom: 1.2rem;
+    }
+
+    .app-title-block h1 {
+        margin-bottom: 0.25rem;
+    }
+
+    .app-title-block p {
+        margin: 0;
+        color: #555555;
+        font-size: 0.98rem;
+    }
+
+    .top-account-row {
+        display: flex;
+        justify-content: flex-end;
+        align-items: stretch;
+        gap: 10px;
+        margin: 0;
+    }
+
+    .st-key-top_account_area {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .st-key-mode_case_guide button,
+    .st-key-mode_quick_question button,
+    .st-key-mode_add_case button {
+        min-height: 62px;
+        border-radius: 2px;
+        font-size: 1.12rem;
+        font-weight: 650;
+        border-width: 1.5px;
+        letter-spacing: 0;
+    }
+
+    .st-key-mode_case_guide button p,
+    .st-key-mode_quick_question button p,
+    .st-key-mode_add_case button p {
+        font-size: 1.12rem;
+        line-height: 1.1;
+        font-weight: 650;
+    }
+
     .login-badge {
-        position: fixed;
-        top: 14px;
-        right: 24px;
-        z-index: 999;
-        background: rgba(250, 250, 250, 0.92);
-        border: 1px solid rgba(49, 51, 63, 0.18);
-        border-radius: 6px;
-        padding: 8px 12px;
-        color: #31333f;
-        font-size: 0.84rem;
-        line-height: 1.25;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        display: inline-block;
+        width: fit-content;
+        min-width: 0;
+        max-width: 420px;
+        background: rgba(255, 255, 255, 0.97);
+        border: 1px solid #d9d9d9;
+        border-top: 3px solid #e30613;
+        border-radius: 2px;
+        padding: 10px 14px 9px;
+        color: #1f1f1f;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+        letter-spacing: 0;
+    }
+
+    .login-badge strong {
+        font-weight: 650;
+    }
+
+    .profile-symbol {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 21px;
+        height: 21px;
+        margin-right: 7px;
+        border: 1px solid #1f1f1f;
+        border-radius: 50%;
+        font-size: 0.78rem;
+        vertical-align: -2px;
+    }
+
+    .st-key-top_logout_button {
+        width: 120px;
+    }
+
+    .st-key-top_logout_button button {
+        min-height: 48px;
+        border-radius: 2px;
+        border: 1px solid #1f1f1f;
+        background: #ffffff;
+        color: #1f1f1f;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .st-key-top_logout_button button:hover {
+        border-color: #e30613;
+        color: #e30613;
     }
     </style>
-    """.replace("__LOGO_BACKGROUND_CSS__", _logo_background_css),
+    """,
     unsafe_allow_html=True,
 )
 
@@ -324,19 +402,21 @@ def _requester_access_level() -> int:
 
 def _render_employee_badge() -> None:
     employee = _current_employee()
-    st.markdown(
-        (
-            '<div class="login-badge">'
-            f"You're logged in as <strong>{employee.full_name}</strong><br>"
-            f"{employee.department} | User ID: {employee.username} | "
-            f"Access: {employee.access_label} (level {employee.access_level})"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-    _, logout_column = st.columns([0.86, 0.14])
+    _, details_column, logout_column = st.columns([0.42, 0.42, 0.16], gap="small")
+    with details_column:
+        st.markdown(
+            (
+                '<div class="login-badge">'
+                '<span class="profile-symbol">&#128100;</span>'
+                f"You're logged in as <strong>{employee.full_name}</strong><br>"
+                f"{employee.department} | User ID: {employee.username} | "
+                f"Access: {employee.access_label} (level {employee.access_level})"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
     with logout_column:
-        if st.button("Log Out", use_container_width=True):
+        if st.button("Log Out", key="top_logout_button", use_container_width=True):
             for key in (
                 "employee_user_id",
                 "employee_access_level",
@@ -348,6 +428,24 @@ def _render_employee_badge() -> None:
             ):
                 st.session_state.pop(key, None)
             st.rerun()
+
+
+def _render_brand_strip() -> None:
+    st.markdown('<div class="six-header-divider"></div>', unsafe_allow_html=True)
+
+
+def _render_top_brand() -> None:
+    logo_column, account_column = st.columns([0.28, 0.72], gap="large")
+    with logo_column:
+        if _brand_logo_path.exists():
+            st.image(str(_brand_logo_path), width=120)
+        else:
+            st.markdown("### SIX")
+    with account_column:
+        with st.container(key="top_account_area"):
+            _render_employee_badge()
+    st.write("")
+    st.markdown('<div class="six-top-divider"></div>', unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -485,10 +583,12 @@ def _build_open_case_question(original_question: str, case_title: str) -> str:
     return (
         f"Open the case named {case_title}.\n"
         f"Original search: {original_question}\n\n"
-        "Use only the selected case evidence. Return exactly these Markdown sections "
+        "Use the selected case evidence for the case details and use only separate "
+        "regulation/reference files for Regulation Source. Return exactly these Markdown sections "
         "in this order: Problem, Decision, Reasoning, Regulations Used, Regulation "
-        "Source, Risks. In Regulation Source, cite the evidence file or document "
-        "where the regulation reference appears. Keep Risks as the final section."
+        "Source, Risks. In Regulation Source, never cite the opened case file itself. "
+        "Cite the regulation/reference evidence file where the regulation appears. "
+        "Keep Risks as the final section."
     )
 
 
@@ -550,12 +650,17 @@ def _retrieve_company_brain(
             return local_chunks
         return _merge_retrieved_chunks(database_chunks, local_chunks, top_k)
 
-    return _retriever().retrieve(
+    retrieved_chunks = _retriever().retrieve(
         question,
         expert=selected_expert,
         top_k=top_k,
         requester_user_id=_requester_user_id(),
     )
+    return [
+        chunk
+        for chunk in retrieved_chunks
+        if _chunk_access_level(chunk) <= _requester_access_level()
+    ]
 
 
 def _merge_retrieved_chunks(
@@ -629,6 +734,40 @@ def _is_case_chunk(chunk: RetrievedChunk) -> bool:
     file_name = chunk.file_name or ""
     source = chunk.source or ""
     return file_name.startswith("Case_") or "data_cases/" in source
+
+
+def _is_regulation_source_chunk(chunk: RetrievedChunk) -> bool:
+    if _is_case_chunk(chunk):
+        return False
+    haystack = " ".join(
+        [
+            chunk.file_name or "",
+            chunk.source or "",
+            chunk.topic or "",
+            chunk.heading or "",
+            chunk.content[:1200],
+        ]
+    ).lower()
+    return any(
+        token in haystack
+        for token in (
+            "regulation",
+            "regulatory",
+            "directive",
+            "mifid",
+            "mifir",
+            "sfdr",
+            "fatca",
+            "taxonomy",
+            "finma",
+            "esma",
+            "rts",
+            "eet",
+            "emt",
+            "law",
+            "compliance",
+        )
+    )
 
 
 CASE_MATCH_STOP_WORDS = {
@@ -823,6 +962,9 @@ def _ask_ollama_for_case_scores(prompt: str) -> str:
 
 
 def _chunk_access_level(chunk: RetrievedChunk) -> int:
+    case_access_level = data_case_access_level(chunk.file_name or chunk.source or "")
+    if case_access_level is not None:
+        return case_access_level
     return int(chunk.metadata.get("access_level") or 1)
 
 
@@ -836,6 +978,9 @@ def _case_collaborators(chunk: RetrievedChunk) -> list[dict[str, object]]:
     if isinstance(metadata_collaborators, list):
         collaborators = []
         for value in metadata_collaborators:
+            if isinstance(value, dict):
+                collaborators.append(value)
+                continue
             employee = _employee_by_name(str(value))
             if employee:
                 collaborators.append(_employee_profile(employee))
@@ -984,6 +1129,79 @@ def _retrieve_similar_case_chunks(
     return case_chunks
 
 
+def _retrieve_regulation_source_chunks(
+    case_title: str,
+    case_chunks: list[RetrievedChunk],
+    expert_choice: str,
+) -> list[RetrievedChunk]:
+    query = _build_regulation_source_query(case_title, case_chunks)
+    selected_expert = expert_for_ui_choice(expert_choice)
+    try:
+        if _use_local_knowledge_store():
+            chunks = _local_knowledge_store().retrieve(
+                query,
+                expert=selected_expert,
+                top_k=24,
+                requester_access_level=_requester_access_level(),
+            )
+        else:
+            chunks = _document_store().keyword_search_documents(
+                query=query,
+                top_k=24,
+                expert=selected_expert,
+                requester_user_id=_requester_user_id(),
+            )
+    except Exception:
+        logging.exception("Failed to retrieve regulation source chunks")
+        return []
+    seen: set[tuple[str | None, int | None]] = set()
+    regulation_chunks: list[RetrievedChunk] = []
+    for chunk in chunks:
+        if not _is_regulation_source_chunk(chunk):
+            continue
+        key = (chunk.file_name or chunk.source, chunk.chunk_index)
+        if key in seen:
+            continue
+        seen.add(key)
+        regulation_chunks.append(chunk)
+        if len(regulation_chunks) >= 5:
+            break
+    return regulation_chunks
+
+
+def _build_regulation_source_query(
+    case_title: str,
+    case_chunks: list[RetrievedChunk],
+) -> str:
+    evidence_text = "\n".join(chunk.content[:2500] for chunk in case_chunks[:3])
+    sections = _extract_case_sections_for_ui(evidence_text)
+    regulation_text = sections.get("regulatory_requirements") or sections.get("regulations") or ""
+    if not regulation_text:
+        regulation_text = evidence_text[:2000]
+    tokens = sorted(_case_match_tokens(f"{case_title} {regulation_text}"))
+    return " ".join(["regulation", "source", *tokens[:28]])
+
+
+def _extract_case_sections_for_ui(content: str) -> dict[str, str]:
+    matches = list(
+        re.finditer(
+            r"(?im)^\s*(problem|decision|reasoning|regulatory requirements|regulations used|risks)\s*:?\s*$",
+            content,
+        )
+    )
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        key = match.group(1).strip().lower().replace(" ", "_")
+        if key == "regulations_used":
+            key = "regulatory_requirements"
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        value = content[start:end].strip()
+        if value:
+            sections[key] = value
+    return sections
+
+
 def _remember_case_overview(
     question: str,
     cases: list[dict[str, object]],
@@ -1055,21 +1273,31 @@ def _render_case_overview(
             ):
                 open_question = _build_open_case_question(question, title)
                 with st.spinner("Opening selected case..."):
+                    regulation_chunks = _retrieve_regulation_source_chunks(
+                        title,
+                        chunks,
+                        expert_choice,
+                    )
+                    answer_chunks = [*chunks, *regulation_chunks]
                     answer = _generate_company_brain_answer(
                         open_question,
-                        chunks,
+                        answer_chunks,
                         expert_choice,
                         answer_style="case_open",
                     )
                 _remember_result(
                     question,
                     answer,
-                    chunks,
+                    answer_chunks,
                     mode="case",
-                    extra={"case_key": key, "case_title": title},
+                    extra={
+                        "case_key": key,
+                        "case_title": title,
+                        "regulation_chunks": regulation_chunks,
+                    },
                 )
                 _persist_chat_message("user", question)
-                _persist_chat_message("assistant", answer.answer, chunks)
+                _persist_chat_message("assistant", answer.answer, answer_chunks)
                 st.rerun()
 
         if can_open:
@@ -1127,6 +1355,7 @@ def _ingest_uploaded_file(
     expert_choice: str,
     access_level: int,
     access_tag: str,
+    collaborators: list[dict[str, object]],
 ) -> UploadResult:
     selected_expert = expert_for_ui_choice(expert_choice)
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -1142,6 +1371,7 @@ def _ingest_uploaded_file(
                 overlap=int(os.getenv("CHUNK_OVERLAP", "180")),
                 access_level=access_level,
                 access_tag=access_tag,
+                collaborators=collaborators,
             )
         if not _supabase_is_configured():
             return UploadResult(
@@ -1156,6 +1386,7 @@ def _ingest_uploaded_file(
                 replace_existing=True,
                 access_level=access_level,
                 access_tag=access_tag,
+                collaborators=collaborators,
             )
         except Exception as exc:
             logging.exception("Failed to persist uploaded file to Supabase")
@@ -1214,10 +1445,34 @@ def _upload_signature(uploaded_file) -> str:
 
 
 def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
-    st.markdown("### Case")
+    st.markdown("### Add Case")
     st.caption("Choose case files to add them to Company Brain.")
+    if _use_local_upload_store():
+        st.caption("Upload destination: local knowledge store")
+    else:
+        st.caption("Upload destination: Supabase")
     selected_access_level = _requester_access_level()
-    selected_access_label = access_tag(selected_access_level)
+    selected_access_tag = access_tag(selected_access_level)
+    employee_options = {
+        f"{employee.full_name} ({employee.department})": employee
+        for employee in _employee_accounts()
+    }
+    current_employee = _current_employee()
+    default_people = [
+        label
+        for label, employee in employee_options.items()
+        if employee.user_id == current_employee.user_id
+    ]
+    selected_people = st.multiselect(
+        "Associated people",
+        list(employee_options.keys()),
+        default=default_people,
+    )
+    selected_collaborators = [
+        _employee_profile(employee_options[label])
+        for label in selected_people
+        if label in employee_options
+    ]
     uploaded_files = st.file_uploader(
         "Case files",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
@@ -1244,7 +1499,8 @@ def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
                     uploaded_file,
                     expert_choice,
                     selected_access_level,
-                    selected_access_label,
+                    selected_access_tag,
+                    selected_collaborators,
                 )
                 total_chunks += result.indexed_chunks
                 if result.database_saved:
@@ -1339,6 +1595,7 @@ def _render_answer_block(
     answer: GeneratedAnswer,
     chunks: list[RetrievedChunk],
     case_title: str | None = None,
+    regulation_chunks: list[RetrievedChunk] | None = None,
 ) -> None:
     if case_title:
         title_column, close_column = st.columns([0.78, 0.22])
@@ -1348,7 +1605,18 @@ def _render_answer_block(
             if st.button("Close", key="close_open_case", use_container_width=True):
                 _close_open_case()
                 st.rerun()
-    st.markdown(_ensure_regulation_source_section(answer.answer, chunks))
+    rendered_answer = _format_open_case_answer(
+        answer.answer,
+        chunks,
+        regulation_chunks or [],
+    )
+    st.markdown(rendered_answer)
+    if case_title:
+        with st.expander("Regulation Sources"):
+            if regulation_chunks:
+                _render_evidence(regulation_chunks)
+            else:
+                st.info("No separate regulation source file was found for this case.")
     with st.expander("Sources and Evidence"):
         source_text = ", ".join(answer.sources) if answer.sources else "No sources found"
         st.caption(f"Sources: {source_text}")
@@ -1356,28 +1624,52 @@ def _render_answer_block(
         _render_evidence(chunks)
 
 
+def _format_open_case_answer(
+    answer_text: str,
+    chunks: list[RetrievedChunk],
+    regulation_chunks: list[RetrievedChunk],
+) -> str:
+    answer_text = _ensure_regulation_source_section(
+        answer_text,
+        chunks,
+        regulation_chunks,
+    )
+    return re.sub(r"(?m)^###\s+", "##### ", answer_text)
+
+
 def _ensure_regulation_source_section(
     answer_text: str,
     chunks: list[RetrievedChunk],
+    regulation_chunks: list[RetrievedChunk] | None = None,
 ) -> str:
     if "### Regulations Used" not in answer_text:
         return answer_text
+    source_text = _regulation_source_text(regulation_chunks or [])
     if "### Regulation Source" in answer_text:
-        return answer_text
-    source_text = ", ".join(
-        source
-        for source in [
-            chunk.file_name or chunk.source
-            for chunk in chunks[:3]
-        ]
-        if source
-    )
-    if not source_text:
-        source_text = "Not specified in the selected evidence."
+        return re.sub(
+            r"(?s)### Regulation Source\s*\n.*?(?=\n\n### Risks|\n### Risks|$)",
+            f"### Regulation Source\n{source_text}",
+            answer_text,
+            count=1,
+        )
     section = f"\n\n### Regulation Source\n{source_text}\n\n"
     if "### Risks" in answer_text:
         return answer_text.replace("\n\n### Risks", section + "### Risks", 1)
     return answer_text + section
+
+
+def _regulation_source_text(regulation_chunks: list[RetrievedChunk]) -> str:
+    sources = []
+    for chunk in regulation_chunks:
+        source = chunk.file_name or chunk.source
+        if source and source not in sources:
+            sources.append(source)
+    if sources:
+        return "\n".join(f"- {source}" for source in sources[:5])
+    return (
+        "No separate regulation source file was found. "
+        "The opened case file is intentionally not used as its own regulation source."
+    )
 
 
 def _render_plain_answer(answer: GeneratedAnswer, chunks: list[RetrievedChunk]) -> None:
@@ -1394,33 +1686,63 @@ def _stored_result(mode: str) -> dict[str, object] | None:
     return result if isinstance(result, dict) else None
 
 
+def _render_main_mode_selector() -> str:
+    if "main_mode_selector" not in st.session_state:
+        st.session_state.main_mode_selector = "Case Guide"
+
+    options = [
+        ("Case Guide", "mode_case_guide"),
+        ("Quick Question", "mode_quick_question"),
+        ("Add Case", "mode_add_case"),
+    ]
+    columns = st.columns(3, gap="small")
+    for column, (label, key) in zip(columns, options):
+        with column:
+            selected = st.session_state.main_mode_selector == label
+            if st.button(
+                label,
+                key=key,
+                type="primary" if selected else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.main_mode_selector = label
+                st.rerun()
+    st.markdown('<div class="mode-selector-spacer"></div>', unsafe_allow_html=True)
+    return str(st.session_state.main_mode_selector)
+
+
 if not _is_authenticated():
     _render_login_gate()
     st.stop()
 
 
-st.title("Company Brain")
-st.caption("Case-first access to past decisions, regulations, reasoning, and risks.")
-_render_employee_badge()
+_render_top_brand()
+st.markdown(
+    (
+        '<div class="app-title-block">'
+        "<h1>Company Brain</h1>"
+        "<p>Case-first access to past decisions, regulations, reasoning, and risks.</p>"
+        "</div>"
+    ),
+    unsafe_allow_html=True,
+)
 
 is_configured = _render_setup_check(_missing_environment())
 expert_choice = "Ask Company Brain"
 top_k = 8
 
-left_column, main_column = st.columns([0.33, 0.67], gap="large")
+case_result = _stored_result("case")
 
-with left_column:
-    _render_reasoning_panel()
-    st.divider()
-    _render_upload_panel(is_configured, expert_choice)
+if case_result:
+    left_column, main_column = st.columns([0.33, 0.67], gap="large")
+    with left_column:
+        _render_reasoning_panel()
+else:
+    main_column = st.container()
 
 with main_column:
-    mode = st.segmented_control(
-        "Mode",
-        ["Case Guide", "Quick Question"],
-        default="Case Guide",
-        label_visibility="collapsed",
-    )
+    _render_brand_strip()
+    mode = _render_main_mode_selector()
 
     if mode == "Case Guide":
         st.subheader("Case Guide")
@@ -1463,12 +1785,14 @@ with main_column:
                         _build_similar_cases(question, chunks),
                     )
 
-        case_result = _stored_result("case")
         if case_result:
             _render_answer_block(
                 case_result["answer"],
                 case_result["chunks"],
                 case_title=str(case_result.get("case_title") or ""),
+                regulation_chunks=case_result.get("regulation_chunks")
+                if isinstance(case_result.get("regulation_chunks"), list)
+                else [],
             )
             case_overview = st.session_state.get("case_overview")
             if isinstance(case_overview, dict):
@@ -1483,7 +1807,7 @@ with main_column:
             if isinstance(case_overview, dict):
                 _render_case_overview(case_overview, expert_choice)
 
-    else:
+    elif mode == "Quick Question":
         st.subheader("Quick Question")
         st.write("Ask directly when you already know the exact question.")
 
@@ -1537,3 +1861,6 @@ with main_column:
                 quick_result["answer"],
                 quick_result["chunks"],
             )
+
+    else:
+        _render_upload_panel(is_configured, expert_choice)
