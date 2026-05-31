@@ -186,16 +186,22 @@ class SupabaseDocumentStore:
         top_k: int,
         expert: str | None = None,
         requester_user_id: str | None = None,
+        include_inaccessible: bool = False,
         scan_limit: int = 1000,
     ) -> list[RetrievedChunk]:
-        if not requester_user_id:
+        if not requester_user_id and not include_inaccessible:
             logger.info("[AI Search] authenticated user: no")
             return []
-        requester_access_level = self._requester_access_level(requester_user_id)
-        logger.info("[AI Search] authenticated user: yes user_id=%s", requester_user_id)
-        if requester_access_level <= 0:
-            logger.info("[AI Search] chunks returned after DB access filter: 0")
-            return []
+        requester_access_level = (
+            self._requester_access_level(requester_user_id)
+            if requester_user_id
+            else 0
+        )
+        if requester_user_id:
+            logger.info("[AI Search] authenticated user: yes user_id=%s", requester_user_id)
+            if requester_access_level <= 0:
+                logger.info("[AI Search] chunks returned after DB access filter: 0")
+                return []
         tokens = _query_tokens(query)
         request = (
             self._client.table("document_chunks")
@@ -205,9 +211,10 @@ class SupabaseDocumentStore:
                 "documents(file_name, source, access_level, access_tag)"
             )
             .lt("access_level", 99)
-            .lte("access_level", requester_access_level)
             .limit(scan_limit)
         )
+        if not include_inaccessible:
+            request = request.lte("access_level", requester_access_level)
         if expert:
             request = request.eq("expert", expert)
         result = request.execute()

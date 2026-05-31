@@ -114,6 +114,7 @@ class LocalKnowledgeStore:
         expert: str | None = None,
         top_k: int = 8,
         requester_access_level: int = 1,
+        include_inaccessible: bool = False,
     ) -> list[RetrievedChunk]:
         rows = self._iter_rows()
         try:
@@ -125,6 +126,7 @@ class LocalKnowledgeStore:
                 expert=expert,
                 top_k=top_k,
                 requester_access_level=requester_access_level,
+                include_inaccessible=include_inaccessible,
             )
         except LocalEmbeddingError:
             return self._retrieve_by_keywords(
@@ -133,6 +135,7 @@ class LocalKnowledgeStore:
                 expert=expert,
                 top_k=top_k,
                 requester_access_level=requester_access_level,
+                include_inaccessible=include_inaccessible,
             )
 
     def _retrieve_by_embeddings(
@@ -142,12 +145,13 @@ class LocalKnowledgeStore:
         expert: str | None,
         top_k: int,
         requester_access_level: int,
+        include_inaccessible: bool,
     ) -> list[RetrievedChunk]:
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in rows:
             if expert and row.get("expert") != expert:
                 continue
-            if not _is_accessible(row, requester_access_level):
+            if not include_inaccessible and not _is_accessible(row, requester_access_level):
                 continue
             embedding = row.get("embedding")
             if not isinstance(embedding, list):
@@ -169,6 +173,7 @@ class LocalKnowledgeStore:
         expert: str | None,
         top_k: int,
         requester_access_level: int,
+        include_inaccessible: bool,
     ) -> list[RetrievedChunk]:
         query_tokens = _expand_query_tokens(_tokens(question))
         if not query_tokens:
@@ -178,7 +183,7 @@ class LocalKnowledgeStore:
         for row in rows:
             if expert and row.get("expert") != expert:
                 continue
-            if not _is_accessible(row, requester_access_level):
+            if not include_inaccessible and not _is_accessible(row, requester_access_level):
                 continue
             score = _score(query_tokens, _tokens(row.get("content", "")))
             if score > 0:

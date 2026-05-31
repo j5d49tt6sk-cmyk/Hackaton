@@ -69,7 +69,7 @@ from company_brain.access_control import (
     DEMO_EMPLOYEES,
     DEMO_EMPLOYEE_PASSWORDS,
     EmployeeAccount,
-    access_options,
+    access_label,
 )
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
@@ -311,7 +311,7 @@ def _render_employee_badge() -> None:
         (
             '<div class="login-badge">'
             f"You're logged in as <strong>{employee.full_name}</strong><br>"
-            f"{employee.department} | User ID: {employee.user_id} | "
+            f"{employee.department} | User ID: {employee.username} | "
             f"Access: {employee.access_label} (level {employee.access_level})"
             "</div>"
         ),
@@ -319,7 +319,7 @@ def _render_employee_badge() -> None:
     )
     _, logout_column = st.columns([0.86, 0.14])
     with logout_column:
-        if st.button("Switch User", use_container_width=True):
+        if st.button("Log Out", use_container_width=True):
             for key in (
                 "employee_user_id",
                 "employee_access_level",
@@ -586,10 +586,16 @@ def _build_similar_cases(
                 "best_similarity": chunk.similarity,
                 "word_similarity": 0.0,
                 "llm_similarity": None,
+                "access_level": _chunk_access_level(chunk),
+                "collaborators": _case_collaborators(chunk),
                 "chunks": [],
             },
         )
         case["best_similarity"] = max(float(case["best_similarity"]), chunk.similarity)
+        case["access_level"] = max(
+            int(case.get("access_level") or 1),
+            _chunk_access_level(chunk),
+        )
         case_chunks = case["chunks"]
         if isinstance(case_chunks, list):
             case_chunks.append(chunk)
@@ -725,15 +731,122 @@ def _ask_ollama_for_case_scores(prompt: str) -> str:
     return str(data.get("response", ""))
 
 
+def _chunk_access_level(chunk: RetrievedChunk) -> int:
+    return int(chunk.metadata.get("access_level") or 1)
+
+
+def _case_can_be_opened(case: dict[str, object]) -> bool:
+    access_level = int(case.get("access_level") or 1)
+    return access_level < 99 and access_level <= _requester_access_level()
+
+
+def _case_collaborators(chunk: RetrievedChunk) -> list[dict[str, object]]:
+    metadata_collaborators = chunk.metadata.get("collaborators")
+    if isinstance(metadata_collaborators, list):
+        collaborators = []
+        for value in metadata_collaborators:
+            employee = _employee_by_name(str(value))
+            if employee:
+                collaborators.append(_employee_profile(employee))
+            elif str(value).strip():
+                collaborators.append(
+                    {
+                        "name": str(value).strip(),
+                        "email": "unknown",
+                        "department": "Unknown",
+                        "access_level": None,
+                    }
+                )
+        return collaborators
+    access_level = _chunk_access_level(chunk)
+    if access_level >= 99:
+        return [
+            {
+                "name": "Legal Archive Team",
+                "email": "legal-archive@six-demo.local",
+                "department": "Legal",
+                "access_level": 99,
+            },
+            {
+                "name": "Compliance Lead",
+                "email": "compliance-lead@six-demo.local",
+                "department": "Compliance",
+                "access_level": 3,
+            },
+        ]
+    employees = [
+        employee
+        for employee in DEMO_EMPLOYEES
+        if employee.access_level >= access_level
+    ]
+    if not employees:
+        employees = DEMO_EMPLOYEES[-1:]
+    return [_employee_profile(employee) for employee in employees]
+
+
+def _employee_by_name(name: str) -> EmployeeAccount | None:
+    normalized = _normalize_login_value(name)
+    for employee in DEMO_EMPLOYEES:
+        if normalized in {
+            _normalize_login_value(employee.full_name),
+            _normalize_login_value(employee.username),
+            _normalize_login_value(employee.email),
+        }:
+            return employee
+    return None
+
+
+def _employee_profile(employee: EmployeeAccount) -> dict[str, object]:
+    return {
+        "name": employee.full_name,
+        "email": employee.email,
+        "department": employee.department,
+        "access_level": employee.access_level,
+        "username": employee.username,
+    }
+
+
+def _render_contact_profiles(collaborators: object) -> None:
+    if not isinstance(collaborators, list) or not collaborators:
+        return
+    st.caption("Mitarbeiter kontaktieren:")
+    columns = st.columns(min(len(collaborators), 3))
+    for index, collaborator in enumerate(collaborators):
+        if not isinstance(collaborator, dict):
+            continue
+        column = columns[index % len(columns)]
+        name = str(collaborator.get("name") or "Unknown")
+        with column:
+            with st.popover(name, use_container_width=True):
+                st.write(f"**{name}**")
+                st.write(f"Email: {collaborator.get('email') or 'unknown'}")
+                st.write(f"Department: {collaborator.get('department') or 'Unknown'}")
+                level = collaborator.get("access_level")
+                if level is not None:
+                    st.write(f"Access level: {level}")
+
+
 def _retrieve_similar_case_chunks(
     question: str,
     expert_choice: str,
 ) -> list[RetrievedChunk]:
-    chunks = _retrieve_company_brain(
-        question,
-        expert_choice,
-        top_k=5000 if _uses_ollama_backend() else 60,
-    )
+    selected_expert = expert_for_ui_choice(expert_choice)
+    if _use_local_knowledge_store():
+        chunks = _local_knowledge_store().retrieve(
+            question,
+            expert=selected_expert,
+            top_k=5000,
+            requester_access_level=_requester_access_level(),
+            include_inaccessible=True,
+        )
+    else:
+        chunks = _document_store().keyword_search_documents(
+            query=question,
+            top_k=5000,
+            expert=selected_expert,
+            requester_user_id=_requester_user_id(),
+            include_inaccessible=True,
+        )
     case_chunks = [chunk for chunk in chunks if _is_case_chunk(chunk)]
     return case_chunks
 
@@ -782,6 +895,9 @@ def _render_case_overview(
             continue
         title = str(case.get("title") or "Untitled case")
         similarity = _similarity_percent(float(case.get("best_similarity", 0.0)))
+        access_level = int(case.get("access_level") or 1)
+        collaborators = case.get("collaborators") or []
+        can_open = _case_can_be_opened(case)
 
         title_column, match_column, action_column = st.columns([0.62, 0.18, 0.20])
         with title_column:
@@ -789,10 +905,19 @@ def _render_case_overview(
             if chunks:
                 source = chunks[0].file_name or chunks[0].source or "Unknown source"
                 st.caption(source)
+            st.caption(f"Required access: {access_label(access_level)} (level {access_level})")
+            _render_contact_profiles(collaborators)
+            if not can_open:
+                st.caption("Locked: bitte einen der Mitarbeiter kontaktieren.")
         with match_column:
             st.metric("Match", f"{similarity}%")
         with action_column:
-            if st.button("Open", key=f"select_case_{index}", use_container_width=True):
+            if st.button(
+                "Open",
+                key=f"select_case_{index}",
+                use_container_width=True,
+                disabled=not can_open,
+            ):
                 open_question = _build_open_case_question(question, title)
                 with st.spinner("Opening selected case..."):
                     answer = _generate_company_brain_answer(
@@ -812,8 +937,9 @@ def _render_case_overview(
                 _persist_chat_message("assistant", answer.answer, chunks)
                 st.rerun()
 
-        with st.expander("Preview evidence"):
-            _render_evidence(chunks[:3])
+        if can_open:
+            with st.expander("Preview evidence"):
+                _render_evidence(chunks[:3])
 
 
 def _session_id() -> str:
@@ -833,7 +959,6 @@ def _chunk_sources(chunks: list[RetrievedChunk]) -> list[dict[str, object]]:
             "heading": chunk.heading,
             "similarity": chunk.similarity,
             "access_level": chunk.metadata.get("access_level"),
-            "access_tag": chunk.metadata.get("access_tag"),
         }
         for chunk in chunks
     ]
@@ -921,7 +1046,6 @@ def _render_evidence(chunks: list[RetrievedChunk]) -> None:
                     "expert": chunk.expert,
                     "topic": chunk.topic,
                     "access_level": chunk.metadata.get("access_level"),
-                    "access_tag": chunk.metadata.get("access_tag"),
                     "chunk_index": chunk.chunk_index,
                     "metadata": chunk.metadata,
                 }
@@ -949,14 +1073,8 @@ def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
         st.caption("Upload destination: local knowledge store")
     else:
         st.caption("Upload destination: Supabase")
-    access_choices = access_options()
-    selected_access_label = st.selectbox(
-        "Access tag",
-        [label for label, _level in access_choices],
-        index=1,
-        help="Email Restricted documents are stored but hidden from all demo employees.",
-    )
-    selected_access_level = dict(access_choices)[selected_access_label]
+    selected_access_level = _requester_access_level()
+    selected_access_label = access_label(selected_access_level)
     uploaded_files = st.file_uploader(
         "Documents",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
