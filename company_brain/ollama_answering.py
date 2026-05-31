@@ -159,9 +159,10 @@ def _build_prompt(
     elif answer_style == "case_open":
         answer_instruction = (
             "Return exactly these Markdown sections in this order: Problem, "
-            "Decision, Reasoning, Regulations Used, Risks. Keep Risks as the final "
-            "section. Use only the selected evidence and do not add general "
-            "knowledge."
+            "Decision, Reasoning, Regulations Used, Regulation Source, Risks. In "
+            "Regulation Source, cite the evidence file where the regulation "
+            "reference appears. Keep Risks as the final section. Use only the "
+            "selected evidence and do not add general knowledge."
         )
     else:
         answer_instruction = (
@@ -329,6 +330,7 @@ def _fallback_answer_from_evidence(
                     "### Regulations Used\n"
                     f"{sections.get('regulatory_requirements', 'Not specified in the selected case.')}"
                 ),
+                f"### Regulation Source\n{_regulation_source(chunks)}",
                 f"### Risks\n{sections.get('risks', 'Not specified in the selected case.')}",
             ]
         )
@@ -380,6 +382,13 @@ def _plain_answer_from_evidence(chunks: list[RetrievedChunk]) -> str:
         + " ".join(selected_sentences)
         + (f" The strongest sources are {source_text}." if source_text else "")
     )
+
+
+def _regulation_source(chunks: list[RetrievedChunk]) -> str:
+    sources = _unique_sources(chunks)
+    if not sources:
+        return "Not specified in the selected evidence."
+    return ", ".join(sources[:3])
 
 
 def _plain_case_answer(chunks: list[RetrievedChunk]) -> str | None:

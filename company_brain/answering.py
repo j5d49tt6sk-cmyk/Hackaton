@@ -104,8 +104,9 @@ def _system_prompt(answer_style: str = "case") -> str:
         section_prompt = (
             "When a specific case is opened, structure the answer with exactly these "
             "Markdown sections in this order: Problem, Decision, Reasoning, "
-            "Regulations Used, Risks. Keep Risks as the final section. Cite file "
-            "names in the sources list. Use confidence High only when the selected "
+            "Regulations Used, Regulation Source, Risks. In Regulation Source, cite "
+            "the file or document where the regulation reference appears. Keep Risks "
+            "as the final section. Cite file names in the sources list. Use confidence High only when the selected "
             "case directly contains the decision, reasoning, and regulations, "
             "Medium when evidence is partial, and Low when evidence is weak or "
             "missing. Return strict JSON with keys answer, sources, confidence, "

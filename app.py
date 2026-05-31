@@ -486,8 +486,9 @@ def _build_open_case_question(original_question: str, case_title: str) -> str:
         f"Open the case named {case_title}.\n"
         f"Original search: {original_question}\n\n"
         "Use only the selected case evidence. Return exactly these Markdown sections "
-        "in this order: Problem, Decision, Reasoning, Regulations Used, Risks. Keep "
-        "Risks as the final section."
+        "in this order: Problem, Decision, Reasoning, Regulations Used, Regulation "
+        "Source, Risks. In Regulation Source, cite the evidence file or document "
+        "where the regulation reference appears. Keep Risks as the final section."
     )
 
 
@@ -1192,14 +1193,9 @@ def _render_evidence(chunks: list[RetrievedChunk]) -> None:
         title = f"{chunk.file_name or chunk.source} | similarity {chunk.similarity:.3f}"
         with st.expander(title):
             st.write(chunk.content)
-            st.json(
-                {
-                    "expert": chunk.expert,
-                    "topic": chunk.topic,
-                    "access_level": chunk.metadata.get("access_level"),
-                    "chunk_index": chunk.chunk_index,
-                    "metadata": chunk.metadata,
-                }
+            st.caption(
+                f"Topic: {chunk.topic or 'Unknown'} | "
+                f"Chunk: {chunk.chunk_index if chunk.chunk_index is not None else 'Unknown'}"
             )
 
 
@@ -1352,12 +1348,36 @@ def _render_answer_block(
             if st.button("Close", key="close_open_case", use_container_width=True):
                 _close_open_case()
                 st.rerun()
-    st.markdown(answer.answer)
+    st.markdown(_ensure_regulation_source_section(answer.answer, chunks))
     with st.expander("Sources and Evidence"):
         source_text = ", ".join(answer.sources) if answer.sources else "No sources found"
         st.caption(f"Sources: {source_text}")
         st.caption(f"Confidence: {answer.confidence}")
         _render_evidence(chunks)
+
+
+def _ensure_regulation_source_section(
+    answer_text: str,
+    chunks: list[RetrievedChunk],
+) -> str:
+    if "### Regulations Used" not in answer_text:
+        return answer_text
+    if "### Regulation Source" in answer_text:
+        return answer_text
+    source_text = ", ".join(
+        source
+        for source in [
+            chunk.file_name or chunk.source
+            for chunk in chunks[:3]
+        ]
+        if source
+    )
+    if not source_text:
+        source_text = "Not specified in the selected evidence."
+    section = f"\n\n### Regulation Source\n{source_text}\n\n"
+    if "### Risks" in answer_text:
+        return answer_text.replace("\n\n### Risks", section + "### Risks", 1)
+    return answer_text + section
 
 
 def _render_plain_answer(answer: GeneratedAnswer, chunks: list[RetrievedChunk]) -> None:
