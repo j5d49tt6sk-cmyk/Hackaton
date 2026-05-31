@@ -869,7 +869,7 @@ def _render_contact_profiles(collaborators: object) -> None:
         column = columns[index % len(columns)]
         name = str(collaborator.get("name") or "Unknown")
         with column:
-            with st.popover(name, use_container_width=True, width=460):
+            with st.popover(name, use_container_width=True, width=700):
                 st.write(f"**{name}**")
                 st.write(f"Department: {collaborator.get('department') or 'Unknown'}")
                 level = collaborator.get("access_level")
@@ -887,9 +887,8 @@ def _render_contact_profiles(collaborators: object) -> None:
                     message = st.text_area(
                         "Message",
                         value=(
-                            f"Hi {name.split()[0]},\n\n"
-                            "I found a related case in Company Brain and would like "
-                            "to ask you a quick follow-up.\n\n"
+                            f"Dear {name.split()[0]},\n\n"
+                            "Insert your message here.\n\n"
                             "Best,"
                         ),
                         height=150,
