@@ -13,9 +13,25 @@ import re
 import urllib.error
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
+
+
+@dataclass(frozen=True)
+class UploadResult:
+    local_chunks: int = 0
+    database_chunks: int | None = None
+    database_error: str | None = None
+
+    @property
+    def indexed_chunks(self) -> int:
+        return self.local_chunks if self.local_chunks else self.database_chunks or 0
+
+    @property
+    def database_saved(self) -> bool:
+        return self.database_chunks is not None and self.database_error is None
 
 
 def _module_is_available(module_name: str) -> bool:
@@ -70,6 +86,7 @@ from company_brain.access_control import (
     DEMO_EMPLOYEE_PASSWORDS,
     EmployeeAccount,
     access_label,
+    access_tag,
 )
 from company_brain.answering import AnswerGenerator
 from company_brain.config import Settings
@@ -380,18 +397,25 @@ def _document_store() -> SupabaseDocumentStore:
 def _missing_environment() -> list[str]:
     if _uses_ollama_backend():
         return []
+    return _database_environment_issues()
+
+
+def _database_environment_issues() -> list[str]:
     missing = []
     if not _env_value("OPENAI_API_KEY"):
         missing.append("OPENAI_API_KEY")
     if not _env_value("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"):
         missing.append("SUPABASE_URL")
-    if not _env_value("SUPABASE_SERVICE_ROLE_KEY"):
+    service_role_key = _env_value("SUPABASE_SERVICE_ROLE_KEY")
+    if not service_role_key:
         missing.append("SUPABASE_SERVICE_ROLE_KEY")
+    elif _looks_like_publishable_supabase_key(service_role_key):
+        missing.append("SUPABASE_SERVICE_ROLE_KEY_REAL_SERVICE_ROLE")
     return missing
 
 
 def _supabase_is_configured() -> bool:
-    return not _missing_environment()
+    return not _database_environment_issues()
 
 
 def _use_local_upload_store() -> bool:
@@ -408,6 +432,21 @@ def _env_value(*names: str) -> str | None:
         if value and not _looks_like_placeholder(value):
             return value
     return None
+
+
+def _looks_like_publishable_supabase_key(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered.startswith(("sb_publishable_", "sb_anon_")):
+        return True
+    if "." not in value:
+        return False
+    try:
+        payload = value.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+    except Exception:
+        return False
+    return decoded.get("role") != "service_role"
 
 
 def _looks_like_placeholder(value: str) -> bool:
@@ -992,13 +1031,14 @@ def _ingest_uploaded_file(
     expert_choice: str,
     access_level: int,
     access_tag: str,
-) -> int:
+) -> UploadResult:
     selected_expert = expert_for_ui_choice(expert_choice)
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir) / uploaded_file.name
         temp_path.write_bytes(uploaded_file.getbuffer())
+        local_chunks = 0
         if _use_local_upload_store():
-            return _local_knowledge_store().ingest_file(
+            local_chunks = _local_knowledge_store().ingest_file(
                 temp_path,
                 expert=selected_expert,
                 topic=Path(uploaded_file.name).stem,
@@ -1007,13 +1047,29 @@ def _ingest_uploaded_file(
                 access_level=access_level,
                 access_tag=access_tag,
             )
-        return _ingestion_pipeline().ingest_file(
-            temp_path,
-            expert=selected_expert,
-            topic=Path(uploaded_file.name).stem,
-            replace_existing=True,
-            access_level=access_level,
-            access_tag=access_tag,
+        if not _supabase_is_configured():
+            return UploadResult(
+                local_chunks=local_chunks,
+                database_error=", ".join(_database_environment_issues()),
+            )
+        try:
+            database_chunks = _ingestion_pipeline().ingest_file(
+                temp_path,
+                expert=selected_expert,
+                topic=Path(uploaded_file.name).stem,
+                replace_existing=True,
+                access_level=access_level,
+                access_tag=access_tag,
+            )
+        except Exception as exc:
+            logging.exception("Failed to persist uploaded file to Supabase")
+            return UploadResult(
+                local_chunks=local_chunks,
+                database_error=str(exc),
+            )
+        return UploadResult(
+            local_chunks=local_chunks,
+            database_chunks=database_chunks,
         )
 
 
@@ -1070,11 +1126,21 @@ def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
     st.markdown("### Upload")
     st.caption("Files are chunked and added to Company Brain immediately.")
     if _use_local_upload_store():
-        st.caption("Upload destination: local knowledge store")
+        if _supabase_is_configured():
+            st.caption("Upload destination: local knowledge store and Supabase")
+        else:
+            st.caption("Upload destination: local knowledge store")
     else:
         st.caption("Upload destination: Supabase")
+    database_issues = _database_environment_issues()
+    if database_issues:
+        st.caption(
+            "Database persistence is waiting for: "
+            + ", ".join(f"`{issue}`" for issue in database_issues)
+        )
     selected_access_level = _requester_access_level()
-    selected_access_label = access_label(selected_access_level)
+    selected_access_label = access_tag(selected_access_level)
+    st.caption(f"Uploaded files inherit your access: {selected_access_label}")
     uploaded_files = st.file_uploader(
         "Documents",
         type=["pdf", "docx", "xlsx", "txt", "md", "csv"],
@@ -1092,19 +1158,34 @@ def _render_upload_panel(is_configured: bool, expert_choice: str) -> None:
     ]
     if pending_files:
         total_chunks = 0
+        database_saved = 0
+        database_errors: list[str] = []
         progress = st.progress(0)
         for index, uploaded_file in enumerate(pending_files, start=1):
             with st.spinner(f"Indexing {uploaded_file.name}..."):
-                chunks = _ingest_uploaded_file(
+                result = _ingest_uploaded_file(
                     uploaded_file,
                     expert_choice,
                     selected_access_level,
                     selected_access_label,
                 )
-                total_chunks += chunks
+                total_chunks += result.indexed_chunks
+                if result.database_saved:
+                    database_saved += 1
+                elif result.database_error:
+                    database_errors.append(f"{uploaded_file.name}: {result.database_error}")
                 st.session_state.indexed_uploads.add(_upload_signature(uploaded_file))
             progress.progress(index / len(pending_files))
         st.success(f"Indexed {total_chunks} chunks from {len(pending_files)} file(s).")
+        if database_saved:
+            st.success(f"Saved {database_saved} file(s) to Supabase.")
+        if database_errors:
+            st.warning(
+                "Indexed locally, but not every file was saved to Supabase. "
+                "Check the database credentials and schema."
+            )
+            for error in database_errors:
+                st.caption(error)
 
 
 def _stop_ollama_generation() -> None:
